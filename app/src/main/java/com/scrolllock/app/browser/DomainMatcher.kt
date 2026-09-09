@@ -76,6 +76,8 @@ class DomainMatcher {
 
     fun getCustomDomains(): Set<String> = customDomains.toSet()
 
+    fun getBuiltinDomains(): Set<String> = builtinDomains.toSet()
+
     fun setCustomDomains(domains: Set<String>) {
         customDomains.clear()
         customDomains.addAll(domains.map { normalizeDomain(it) })

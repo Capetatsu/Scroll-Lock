@@ -158,4 +158,6 @@ class PreferencesManager(private val context: Context) {
             context.dataStore.edit { it[DEBUG_MODE] = enabled }
         }
     }
+
+    fun isDebugModeBlocking(): Boolean = runBlocking { debugMode.first() }
 }

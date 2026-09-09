@@ -64,4 +64,73 @@ class DetectorConfidenceTest {
         confidence += 0.15
         assertFalse(confidence >= 0.70)
     }
+
+    @Test
+    fun `DetectionResult match when confidence high`() {
+        val candidate = DetectionCandidate(
+            packageName = "com.instagram.android",
+            surface = DetectionSurface.REELS,
+            confidence = 0.85
+        )
+        assertEquals(DetectionResult.MATCH, candidate.matchResult)
+    }
+
+    @Test
+    fun `DetectionResult unknown when confidence low`() {
+        val candidate = DetectionCandidate(
+            packageName = "com.instagram.android",
+            surface = DetectionSurface.REELS,
+            confidence = 0.50
+        )
+        assertEquals(DetectionResult.UNKNOWN, candidate.matchResult)
+    }
+
+    @Test
+    fun `DetectionSignal tracks visibility`() {
+        val signal = DetectionSignal(
+            type = SignalType.RESOURCE_ID,
+            identifier = "test_id",
+            confidence = 0.30,
+            isVisible = true,
+            description = "test_signal"
+        )
+        assertTrue(signal.isVisible)
+    }
+
+    @Test
+    fun `DetectionSignal tracks selected state`() {
+        val signal = DetectionSignal(
+            type = SignalType.SELECTED_STATE,
+            identifier = "feed_tab",
+            confidence = 0.35,
+            isSelected = true,
+            description = "feed_tab_selected"
+        )
+        assertTrue(signal.isSelected)
+    }
+
+    @Test
+    fun `DetectionDebugInfo contains all fields`() {
+        val info = DetectionDebugInfo(
+            packageName = "com.instagram.android",
+            surface = DetectionSurface.REELS,
+            confidence = 0.85,
+            matchResult = DetectionResult.MATCH,
+            signals = listOf(
+                DetectionSignal(
+                    type = SignalType.RESOURCE_ID,
+                    identifier = "reel_item_toolbar_container",
+                    confidence = 0.30,
+                    description = "reel_item_toolbar_container"
+                )
+            ),
+            reasonCodes = listOf("reel_item_toolbar_container")
+        )
+        assertEquals("com.instagram.android", info.packageName)
+        assertEquals(DetectionSurface.REELS, info.surface)
+        assertEquals(0.85, info.confidence, 0.001)
+        assertEquals(DetectionResult.MATCH, info.matchResult)
+        assertEquals(1, info.signals.size)
+        assertEquals(1, info.reasonCodes.size)
+    }
 }

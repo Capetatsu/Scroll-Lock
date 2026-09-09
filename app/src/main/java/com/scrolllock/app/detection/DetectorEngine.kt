@@ -1,5 +1,6 @@
 package com.scrolllock.app.detection
 
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
 interface ContentDetector {
@@ -15,26 +16,34 @@ object DetectorEngine {
     private var lastWindowId: Int = -1
     private var lastDetection: List<DetectionCandidate> = emptyList()
     private var lastDetectionTime: Long = 0L
+    private var lastEventType: Int = 0
 
-    private const val CACHE_TTL_MS = 500L
+    private const val CACHE_TTL_MS = 200L
     private const val WINDOW_CHANGE_INVALIDATE = true
+    private const val SCROLL_CACHE_TTL_MS = 50L
+    private const val CONTENT_CHANGE_INVALIDATE_TYPES = (
+        AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+        AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
+        AccessibilityEvent.TYPE_VIEW_FOCUSED or
+        AccessibilityEvent.TYPE_VIEW_CLICKED
+    )
 
     fun registerDetector(detector: ContentDetector) {
         detectors.add(detector)
     }
 
-    fun detect(packageName: String?, root: AccessibilityNodeInfo?, eventType: Int = 0): List<DetectionCandidate> {
+    fun detect(
+        packageName: String?,
+        root: AccessibilityNodeInfo?,
+        eventType: Int = 0
+    ): List<DetectionCandidate> {
         if (packageName == null || root == null) return emptyList()
 
         val now = System.currentTimeMillis()
         val rootHash = computeRootHash(root)
         val windowId = root.windowId
 
-        if (packageName == lastPackageName &&
-            rootHash == lastRootHashCode &&
-            windowId == lastWindowId &&
-            (now - lastDetectionTime) < CACHE_TTL_MS
-        ) {
+        if (!shouldInvalidate(packageName, rootHash, windowId, eventType, now)) {
             return lastDetection
         }
 
@@ -54,8 +63,36 @@ object DetectorEngine {
         lastWindowId = windowId
         lastDetection = candidates
         lastDetectionTime = now
+        lastEventType = eventType
 
         return candidates
+    }
+
+    private fun shouldInvalidate(
+        packageName: String,
+        rootHash: Int,
+        windowId: Int,
+        eventType: Int,
+        now: Long
+    ): Boolean {
+        if (packageName != lastPackageName) return true
+        if (windowId != lastWindowId) return true
+
+        if (eventType and CONTENT_CHANGE_INVALIDATE_TYPES != 0) {
+            return true
+        }
+
+        val effectiveTtl = if (eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+            SCROLL_CACHE_TTL_MS
+        } else {
+            CACHE_TTL_MS
+        }
+
+        if ((now - lastDetectionTime) >= effectiveTtl) return true
+
+        if (rootHash != lastRootHashCode) return true
+
+        return false
     }
 
     fun forceInvalidate() {
@@ -64,6 +101,7 @@ object DetectorEngine {
         lastWindowId = -1
         lastDetection = emptyList()
         lastDetectionTime = 0L
+        lastEventType = 0
     }
 
     fun clearCache() {
@@ -76,11 +114,18 @@ object DetectorEngine {
         hash = 31 * hash + root.childCount
         hash = 31 * hash + root.windowId
         hash = 31 * hash + (root.viewIdResourceName?.hashCode() ?: 0)
-        hash = 31 * hash + root.hashCode()
-        val child = root.getChild(0)
-        if (child != null) {
-            hash = 31 * hash + (child.viewIdResourceName?.hashCode() ?: 0)
-            hash = 31 * hash + child.childCount
+
+        val childCount = minOf(root.childCount, 5)
+        for (i in 0 until childCount) {
+            val child = root.getChild(i)
+            if (child != null) {
+                hash = 31 * hash + (child.viewIdResourceName?.hashCode() ?: 0)
+                hash = 31 * hash + child.childCount
+                hash = 31 * hash + (child.text?.hashCode() ?: 0)
+                hash = 31 * hash + (child.contentDescription?.hashCode() ?: 0)
+                hash = 31 * hash + if (child.isSelected) 1 else 0
+                hash = 31 * hash + if (child.isVisibleToUser) 1 else 0
+            }
         }
         return hash
     }

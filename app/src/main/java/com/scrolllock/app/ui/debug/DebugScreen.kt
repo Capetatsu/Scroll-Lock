@@ -11,6 +11,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.scrolllock.app.data.preferences.PreferencesManager
 import com.scrolllock.app.detection.*
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -19,15 +20,19 @@ fun DebugScreen() {
     val prefs = remember { PreferencesManager(context) }
     val debugMode by prefs.debugMode.collectAsState(initial = false)
 
-    var currentPackage by remember { mutableStateOf("N/A") }
-    var eventType by remember { mutableStateOf("N/A") }
-    var detectedSurface by remember { mutableStateOf("N/A") }
-    var confidence by remember { mutableStateOf("0.0") }
-    var matchedIds by remember { mutableStateOf(emptyList<String>()) }
-    var matchedText by remember { mutableStateOf(emptyList<String>()) }
-    var targetBounds by remember { mutableStateOf("N/A") }
-    var activeFeature by remember { mutableStateOf("N/A") }
-    var cooldownState by remember { mutableStateOf("Inactive") }
+    var latestEvent by remember { mutableStateOf<DetectionDebugInfo?>(null) }
+    var eventCount by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(debugMode) {
+        while (debugMode) {
+            val event = DebugEventBus.getLatestEvent()
+            if (event != latestEvent) {
+                latestEvent = event
+                eventCount = DebugEventBus.getRecentEvents().size
+            }
+            delay(200)
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -59,27 +64,55 @@ fun DebugScreen() {
                     Text("Live Detector Feed", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    InfoRow("Package", currentPackage)
-                    InfoRow("Event Type", eventType)
-                    InfoRow("Detected Surface", detectedSurface)
-                    InfoRow("Confidence", confidence)
-                    InfoRow("Target Bounds", targetBounds)
-                    InfoRow("Active Feature", activeFeature)
-                    InfoRow("Cooldown", cooldownState)
+                    if (latestEvent != null) {
+                        val event = latestEvent!!
+                        InfoRow("Package", event.packageName)
+                        InfoRow("Surface", event.surface.name)
+                        InfoRow("Confidence", String.format("%.2f", event.confidence))
+                        InfoRow("Result", event.matchResult.name)
+                        InfoRow("Events Cached", eventCount.toString())
 
-                    if (matchedIds.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Matched IDs:", fontWeight = FontWeight.Medium)
-                        matchedIds.forEach { id ->
-                            Text("  $id", style = MaterialTheme.typography.bodySmall)
+                        if (event.reasonCodes.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Reason Codes:", fontWeight = FontWeight.Medium)
+                            event.reasonCodes.forEach { code ->
+                                Text("  $code", style = MaterialTheme.typography.bodySmall)
+                            }
                         }
-                    }
 
-                    if (matchedText.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("Matched Text:", fontWeight = FontWeight.Medium)
-                        matchedText.forEach { text ->
-                            Text("  $text", style = MaterialTheme.typography.bodySmall)
+                        if (event.signals.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Detection Signals:", fontWeight = FontWeight.Medium)
+                            event.signals.forEach { signal ->
+                                SignalRow(signal)
+                            }
+                        }
+                    } else {
+                        Text(
+                            "No detection events yet. Navigate to a monitored app.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Recent Events", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    val recentEvents = DebugEventBus.getRecentEvents().take(10)
+                    if (recentEvents.isEmpty()) {
+                        Text(
+                            "No events recorded.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        recentEvents.forEach { event ->
+                            EventSummaryRow(event)
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                         }
                     }
                 }
@@ -115,6 +148,76 @@ fun DebugScreen() {
                 }
             }
         }
+    }
+}
+
+@Composable
+fun SignalRow(signal: DetectionSignal) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            signal.description,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.weight(1f)
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                "conf=${String.format("%.2f", signal.confidence)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+            if (signal.isSelected) {
+                Text(
+                    "selected",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+            }
+            if (signal.isVisible) {
+                Text(
+                    "visible",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun EventSummaryRow(event: DetectionDebugInfo) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            event.surface.name,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            String.format("%.2f", event.confidence),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.weight(0.5f)
+        )
+        Text(
+            event.matchResult.name,
+            style = MaterialTheme.typography.bodySmall,
+            color = when (event.matchResult) {
+                DetectionResult.MATCH -> MaterialTheme.colorScheme.tertiary
+                DetectionResult.NO_MATCH -> MaterialTheme.colorScheme.error
+                DetectionResult.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.weight(0.7f)
+        )
     }
 }
 

@@ -18,6 +18,7 @@ import com.scrolllock.app.data.model.InstagramAntiReelsSettings
 import com.scrolllock.app.data.preferences.PreferencesManager
 import com.scrolllock.app.data.room.ScrollLockDatabase
 import com.scrolllock.app.detection.*
+import com.scrolllock.app.detection.DebugEventBus
 import com.scrolllock.app.detection.instagram.InstagramDetector
 import com.scrolllock.app.detection.youtube.YouTubeDetector
 import com.scrolllock.app.detection.tiktok.TikTokDetector
@@ -35,10 +36,11 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         private const val TAG = "ScrollLockA11y"
         private const val CHANNEL_ID = "scrolllock_service"
         private const val NOTIFICATION_ID = 1
-        private const val SCROLL_THROTTLE_MS = 100L
-        private const val WINDOW_THROTTLE_MS = 300L
+        private const val SCROLL_THROTTLE_MS = 60L
+        private const val WINDOW_THROTTLE_MS = 200L
+        private const val PREFS_REFRESH_INTERVAL_MS = 5000L
+        private const val OVERLAY_DISMISS_MS = 3000L
         private const val COOLDOWN_CHECK_INTERVAL_MS = 5000L
-        private const val OVERLAY_DISMISS_MS = 5000L
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -55,10 +57,19 @@ class ScrollLockAccessibilityService : AccessibilityService() {
     private var lastWindowEventTime = 0L
     private var lastPackageName: String? = null
 
+    private var cachedProtectionEnabled = false
+    private var cachedAntiScrollEnabled = false
+    private var cachedAntiReelsEnabled = false
+    private var cachedBrowserBlockEnabled = false
+    private var cachedCooldownEnabled = false
+    private var cachedSchedulesEnabled = false
+
     private var cooldownActive = false
     private var cooldownExpiry = 0L
     private var cooldownSourceApp: String? = null
     private var cooldownExtraApps: Set<String> = emptySet()
+    private var cooldownStart = 0L
+    private var cooldownDuration = 30
 
     private var overlayShownTime = 0L
     private var lastOverlayPackage: String? = null
@@ -87,10 +98,12 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         antiScrollEngine = AntiScrollEngine(db!!.swipeDao(), db!!.antiScrollDao())
 
         registerDetectors()
+        refreshCachedPrefs()
 
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, createNotification())
 
+        startPrefsRefreshLoop()
         startCooldownCheckLoop()
     }
 
@@ -105,14 +118,23 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         DetectorEngine.registerDetector(BrowserDetector())
     }
 
+    private fun refreshCachedPrefs() {
+        val p = prefs ?: return
+        cachedProtectionEnabled = p.isProtectionEnabledBlocking()
+        cachedAntiScrollEnabled = p.isAntiScrollEnabledBlocking()
+        cachedAntiReelsEnabled = p.isAntiReelsEnabledBlocking()
+        cachedBrowserBlockEnabled = p.isBrowserBlockEnabledBlocking()
+        cachedCooldownEnabled = p.isCooldownEnabledBlocking()
+        cachedSchedulesEnabled = p.isSchedulesEnabledBlocking()
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         val packageName = event.packageName?.toString() ?: return
         if (packageName == this.packageName) return
 
-        val preferences = prefs ?: return
-        if (!preferences.isProtectionEnabledBlocking()) {
-            overlayController?.hide()
+        if (!cachedProtectionEnabled) {
+            mainHandler.post { overlayController?.hide() }
             return
         }
 
@@ -123,153 +145,180 @@ class ScrollLockAccessibilityService : AccessibilityService() {
                 if (now - lastScrollEventTime < SCROLL_THROTTLE_MS) return
                 lastScrollEventTime = now
                 lastPackageName = packageName
-                handleScrollEvent(event, packageName, preferences)
+                routeScrollEvent(event, packageName)
             }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 if (now - lastWindowEventTime < WINDOW_THROTTLE_MS) return
                 lastWindowEventTime = now
                 lastPackageName = packageName
                 DetectorEngine.forceInvalidate()
-                handleWindowChanged(event, packageName, preferences)
+                routeWindowEvent(event, packageName)
             }
         }
     }
 
-    private fun handleScrollEvent(
-        event: AccessibilityEvent,
-        packageName: String,
-        preferences: PreferencesManager
-    ) {
-        val isAntiScrollEnabled = preferences.isAntiScrollEnabledBlocking()
-        val isAntiReelsEnabled = preferences.isAntiReelsEnabledBlocking()
-
-        if (!isAntiScrollEnabled && !isAntiReelsEnabled) return
-
-        val scrollDeltaY = event.scrollY
-        val fromScrollY = event.fromIndex
-        val toScrollY = event.toIndex
-        val eventTime = event.eventTime
-
-        if (isAntiScrollEnabled) {
+    private fun routeScrollEvent(event: AccessibilityEvent, packageName: String) {
+        if (cachedAntiScrollEnabled) {
+            handleAntiScroll(event, packageName)
+        }
+        if (cachedAntiReelsEnabled) {
+            val rootNode = rootInActiveWindow ?: return
             scope.launch {
-                val result = antiScrollEngine?.recordSwipe(
-                    packageName, scrollDeltaY, eventTime, fromScrollY, toScrollY
-                )
-                if (result == SwipeResult.RECORDED) {
-                    if (antiScrollEngine?.shouldBlock(packageName) == true) {
-                        showBlockOverlay(packageName, "Anti-Scroll Active", "You've been scrolling too much!")
-                        preferences.incrementBlockedCount()
-                    }
-                }
+                evaluateDetection(packageName, rootNode, FeatureMask.ANTI_REELS)
             }
-        }
-
-        if (isAntiReelsEnabled) {
-            val rootNode = rootInActiveWindow ?: return
-            evaluateDetection(packageName, rootNode, preferences, FeatureMask.ANTI_SCROLL)
         }
     }
 
-    private fun handleWindowChanged(
-        event: AccessibilityEvent,
-        packageName: String,
-        preferences: PreferencesManager
-    ) {
-        val isAntiReelsEnabled = preferences.isAntiReelsEnabledBlocking()
-        val isBrowserEnabled = preferences.isBrowserBlockEnabledBlocking()
-
-        if (isBrowserEnabled && packageName in supportedBrowserPackages) {
+    private fun routeWindowEvent(event: AccessibilityEvent, packageName: String) {
+        if (cachedBrowserBlockEnabled && packageName in supportedBrowserPackages) {
             val rootNode = rootInActiveWindow ?: return
-            val result = browserBlocker?.checkUrl(packageName, rootNode)
-            if (result?.blocked == true) {
-                showBlockOverlay(packageName, "Website Blocked", "This site is not available")
-                scope.launch { preferences.incrementBlockedCount() }
-            }
+            handleBrowserCheck(packageName, rootNode)
             return
         }
 
-        if (isAntiReelsEnabled) {
+        if (cachedAntiReelsEnabled) {
             val rootNode = rootInActiveWindow ?: return
-            evaluateDetection(packageName, rootNode, preferences, FeatureMask.ANTI_REELS)
+            scope.launch {
+                evaluateDetection(packageName, rootNode, FeatureMask.ANTI_REELS)
+            }
         }
     }
 
-    private fun evaluateDetection(
-        packageName: String,
-        rootNode: AccessibilityNodeInfo,
-        preferences: PreferencesManager,
-        featureMask: Int
-    ) {
+    private fun handleAntiScroll(event: AccessibilityEvent, packageName: String) {
+        val scrollY = event.scrollY
+        val eventTime = event.eventTime
+
         scope.launch {
-            val candidates = DetectorEngine.detect(packageName, rootNode, 0)
-            val topCandidate = candidates.maxByOrNull { it.confidence } ?: return@launch
-
-            if (topCandidate.confidence < 0.70) return@launch
-
-            val appInfo = db?.appInfoDao()?.getByPackage(packageName)
-            val appEnabled = appInfo?.enabled ?: false
-
-            if (!appEnabled) return@launch
-
-            val isScheduledActive = preferences.isSchedulesEnabledBlocking()
-            val scheduleActive = if (isScheduledActive) {
-                val rules = db?.scheduleRuleDao()?.getEnabled() ?: emptyList()
-                ScheduleEngine.isScheduleActive(rules, packageName, featureMask)
-            } else true
-
-            val cooldownCurrentlyActive = cooldownActive &&
-                    (packageName == cooldownSourceApp || packageName in cooldownExtraApps)
-
-            val igSettings = if (packageName == "com.instagram.android") {
-                try {
-                    val json = appInfo?.antiReelsSettingsJSON
-                    if (json != null) {
-                        com.scrolllock.app.data.room.Converters().toInstagramSettings(json)
-                    } else null
-                } catch (e: Exception) { null }
-            } else null
-
-            val context = PolicyEngine.buildContext(
+            val analysis = antiScrollEngine?.analyzeScrollEvent(
                 packageName = packageName,
-                appEnabled = appEnabled,
-                antiReelsEnabled = preferences.isAntiReelsEnabledBlocking(),
-                antiScrollEnabled = preferences.isAntiScrollEnabledBlocking(),
-                browserBlockEnabled = preferences.isBrowserBlockEnabledBlocking(),
-                scheduleActive = scheduleActive,
-                cooldownActive = cooldownCurrentlyActive,
-                blockingSessionActive = false,
-                confidence = topCandidate.confidence,
-                detectedFeature = featureMask,
-                surfaceName = topCandidate.surface.name,
-                instagramSettings = igSettings
+                scrollY = scrollY,
+                eventTime = eventTime
             )
 
-            val decision = PolicyEngine.evaluate(context)
+            when (analysis) {
+                is ScrollAnalysis.Recorded -> {
+                    val blockDecision = antiScrollEngine?.shouldBlock(packageName)
+                    if (blockDecision is BlockDecision.Blocked) {
+                        showBlockOverlay(packageName, "Anti-Scroll Active", "You've been scrolling too much!")
+                        scope.launch { prefs?.incrementBlockedCount() }
+                    }
+                }
+                is ScrollAnalysis.Blocked -> {
+                    showBlockOverlay(packageName, "Anti-Scroll Active", "Cooldown in progress")
+                }
+                else -> {}
+            }
+        }
+    }
 
-            when (decision.action) {
-                PolicyDecision.Action.BLOCK -> {
-                    val title = when {
-                        topCandidate.surface == DetectionSurface.REELS -> "Reels Blocked"
-                        topCandidate.surface == DetectionSurface.SHORTS -> "Shorts Blocked"
-                        topCandidate.surface == DetectionSurface.TIKTOK_VIDEO -> "TikTok Blocked"
-                        else -> "Content Blocked"
-                    }
-                    showBlockOverlay(packageName, title, decision.reason)
-                    scope.launch { preferences.incrementBlockedCount() }
+    private fun handleBrowserCheck(packageName: String, rootNode: AccessibilityNodeInfo) {
+        scope.launch {
+            val result = browserBlocker?.checkUrl(packageName, rootNode)
+            if (result?.blocked == true) {
+                showBlockOverlay(packageName, "Website Blocked", "This site is not available")
+                prefs?.incrementBlockedCount()
+            }
+        }
+    }
+
+    private suspend fun evaluateDetection(
+        packageName: String,
+        rootNode: AccessibilityNodeInfo,
+        featureMask: Int
+    ) {
+        val candidates = DetectorEngine.detect(packageName, rootNode, 0)
+        val topCandidate = candidates.maxByOrNull { it.confidence } ?: return
+
+        if (topCandidate.confidence < 0.70) return
+
+        val appInfo = try {
+            db?.appInfoDao()?.getByPackage(packageName)
+        } catch (e: Exception) { null }
+        val appEnabled = appInfo?.enabled ?: false
+
+        if (!appEnabled) return
+
+        val scheduleActive = if (cachedSchedulesEnabled) {
+            try {
+                val rules = db?.scheduleRuleDao()?.getEnabled() ?: emptyList()
+                ScheduleEngine.isScheduleActive(rules, packageName, featureMask)
+            } catch (e: Exception) { true }
+        } else true
+
+        val cooldownCurrentlyActive = cooldownActive &&
+                CooldownEngine.isSourceOrExtraApp(cooldownSourceApp, packageName, cooldownExtraApps)
+
+        val igSettings = if (packageName == "com.instagram.android") {
+            try {
+                val json = appInfo?.antiReelsSettingsJSON
+                if (json != null) {
+                    com.scrolllock.app.data.room.Converters().toInstagramSettings(json)
+                } else null
+            } catch (e: Exception) { null }
+        } else null
+
+        val context = PolicyEngine.buildContext(
+            packageName = packageName,
+            appEnabled = appEnabled,
+            antiReelsEnabled = cachedAntiReelsEnabled,
+            antiScrollEnabled = cachedAntiScrollEnabled,
+            browserBlockEnabled = cachedBrowserBlockEnabled,
+            scheduleActive = scheduleActive,
+            cooldownActive = cooldownCurrentlyActive,
+            blockingSessionActive = false,
+            confidence = topCandidate.confidence,
+            detectedFeature = featureMask,
+            surfaceName = topCandidate.surface.name,
+            instagramSettings = igSettings
+        )
+
+        val decision = PolicyEngine.evaluate(context)
+
+        if (prefs?.isDebugModeBlocking() == true) {
+            DebugEventBus.postEvent(DetectionDebugInfo(
+                packageName = packageName,
+                surface = topCandidate.surface,
+                confidence = topCandidate.confidence,
+                matchResult = topCandidate.matchResult,
+                signals = topCandidate.signals,
+                reasonCodes = topCandidate.reasonCodes
+            ))
+        }
+
+        executeDecision(decision, packageName, topCandidate)
+    }
+
+    private fun executeDecision(
+        decision: PolicyDecision,
+        packageName: String,
+        candidate: DetectionCandidate
+    ) {
+        when (decision.action) {
+            PolicyDecision.Action.BLOCK -> {
+                val title = when (candidate.surface) {
+                    DetectionSurface.REELS -> "Reels Blocked"
+                    DetectionSurface.SHORTS -> "Shorts Blocked"
+                    DetectionSurface.TIKTOK_VIDEO -> "TikTok Blocked"
+                    DetectionSurface.STORIES -> "Stories Blocked"
+                    DetectionSurface.EXPLORE -> "Explore Blocked"
+                    DetectionSurface.COMMENTS -> "Comments Blocked"
+                    else -> "Content Blocked"
                 }
-                PolicyDecision.Action.REDIRECT -> {
-                    if (decision.redirectTarget == "direct" && packageName == "com.instagram.android") {
-                        performInstagramRedirect()
-                    }
+                showBlockOverlay(packageName, title, decision.reason)
+                scope.launch { prefs?.incrementBlockedCount() }
+            }
+            PolicyDecision.Action.REDIRECT -> {
+                if (decision.redirectTarget == "direct" && packageName == "com.instagram.android") {
+                    performInstagramRedirect()
                 }
-                PolicyDecision.Action.ALLOW -> {
-                    if (lastOverlayPackage == packageName) {
-                        mainHandler.post { overlayController?.hide() }
-                    }
-                }
-                PolicyDecision.Action.HIDE -> {
+            }
+            PolicyDecision.Action.ALLOW -> {
+                if (lastOverlayPackage == packageName) {
                     mainHandler.post { overlayController?.hide() }
                 }
+            }
+            PolicyDecision.Action.HIDE -> {
+                mainHandler.post { overlayController?.hide() }
             }
         }
     }
@@ -294,6 +343,15 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun startPrefsRefreshLoop() {
+        scope.launch {
+            while (isActive) {
+                refreshCachedPrefs()
+                delay(PREFS_REFRESH_INTERVAL_MS)
+            }
+        }
+    }
+
     private fun startCooldownCheckLoop() {
         scope.launch {
             while (isActive) {
@@ -304,18 +362,19 @@ class ScrollLockAccessibilityService : AccessibilityService() {
     }
 
     private fun checkCooldown() {
-        val preferences = prefs ?: return
-        val enabled = preferences.isCooldownEnabledBlocking()
-        if (!enabled) {
+        val p = prefs ?: return
+        if (!cachedCooldownEnabled) {
             cooldownActive = false
             return
         }
 
-        val sourceApp = preferences.getCooldownSourceAppBlocking()
-        val duration = preferences.getCooldownDurationBlocking()
-        val start = preferences.getCooldownStartBlocking()
+        val sourceApp = p.getCooldownSourceAppBlocking()
+        val duration = p.getCooldownDurationBlocking()
+        val start = p.getCooldownStartBlocking()
 
         cooldownSourceApp = sourceApp.ifEmpty { null }
+        cooldownStart = start
+        cooldownDuration = duration
         cooldownActive = CooldownEngine.isCooldownActive(sourceApp, start, duration, "", emptySet())
         cooldownExpiry = if (start > 0) start + duration * 60_000L else 0L
     }

@@ -9,5 +9,8 @@ import androidx.room.Entity
 data class Swipe(
     val packageName: String,
     val timestamp: Long,
-    val swipeDirection: Int
+    val swipeDirection: Int,
+    val scrollDeltaY: Int = 0,
+    val fromIndex: Int = -1,
+    val toIndex: Int = -1
 )

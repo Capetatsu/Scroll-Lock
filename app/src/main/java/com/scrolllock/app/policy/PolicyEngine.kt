@@ -1,6 +1,7 @@
 package com.scrolllock.app.policy
 
 import com.scrolllock.app.data.model.FeatureMask
+import com.scrolllock.app.data.model.InstagramAntiReelsSettings
 import com.scrolllock.app.data.model.ScheduleRule
 import com.scrolllock.app.data.model.TimeSlot
 import java.time.DayOfWeek
@@ -19,13 +20,13 @@ data class DecisionContext(
     val confidence: Double = 0.0,
     val detectedFeature: Int = 0,
     val surfaceName: String = "",
-    val instagramReelsBlocked: Boolean = false,
-    val instagramStoriesBlocked: Boolean = false,
-    val instagramFeedBlocked: Boolean = false,
-    val instagramCommentsBlocked: Boolean = false,
-    val instagramExploreBlocked: Boolean = false,
-    val instagramAllowReelsInDM: Boolean = true
-)
+    val instagramSettings: InstagramAntiReelsSettings? = null
+) {
+    val isInstagram: Boolean get() = packageName == "com.instagram.android"
+    val isAntiScrollSurface: Boolean get() = detectedFeature == FeatureMask.ANTI_SCROLL
+    val isAntiReelsSurface: Boolean get() = detectedFeature == FeatureMask.ANTI_REELS
+    val isBrowserSurface: Boolean get() = detectedFeature == FeatureMask.BROWSER_BLOCKING
+}
 
 data class PolicyDecision(
     val action: Action,
@@ -46,14 +47,6 @@ object PolicyEngine {
             return PolicyDecision(PolicyDecision.Action.ALLOW, "app_not_enabled")
         }
 
-        if (context.cooldownActive) {
-            return PolicyDecision(PolicyDecision.Action.BLOCK, "cooldown_active")
-        }
-
-        if (context.blockingSessionActive) {
-            return PolicyDecision(PolicyDecision.Action.BLOCK, "timeout_active")
-        }
-
         if (!context.antiReelsEnabled && !context.antiScrollEnabled && !context.browserBlockEnabled) {
             return PolicyDecision(PolicyDecision.Action.ALLOW, "no_features_enabled")
         }
@@ -66,43 +59,73 @@ object PolicyEngine {
             return PolicyDecision(PolicyDecision.Action.ALLOW, "low_confidence")
         }
 
-        if (context.instagramReelsBlocked && context.surfaceName == "REELS") {
-            return PolicyDecision(PolicyDecision.Action.BLOCK, "instagram_reels_blocked")
+        if (context.cooldownActive) {
+            return PolicyDecision(PolicyDecision.Action.BLOCK, "cooldown_active")
         }
 
-        if (context.instagramStoriesBlocked && context.surfaceName == "STORIES") {
-            return PolicyDecision(PolicyDecision.Action.BLOCK, "instagram_stories_blocked")
+        if (context.blockingSessionActive) {
+            return PolicyDecision(PolicyDecision.Action.BLOCK, "timeout_active")
         }
 
-        if (context.instagramFeedBlocked && context.surfaceName == "MAIN_FEED") {
-            return PolicyDecision(PolicyDecision.Action.REDIRECT, "instagram_feed_blocked", "direct")
+        if (context.isInstagram && context.antiReelsEnabled) {
+            val igDecision = evaluateInstagram(context)
+            if (igDecision != null) return igDecision
         }
 
-        if (context.instagramCommentsBlocked && context.surfaceName == "COMMENTS") {
-            return PolicyDecision(PolicyDecision.Action.BLOCK, "instagram_comments_blocked")
-        }
-
-        if (context.instagramExploreBlocked && context.surfaceName == "EXPLORE") {
-            return PolicyDecision(PolicyDecision.Action.BLOCK, "instagram_explore_blocked")
-        }
-
-        if (context.instagramAllowReelsInDM && context.surfaceName == "DM") {
-            return PolicyDecision(PolicyDecision.Action.ALLOW, "instagram_dm_allowed")
-        }
-
-        if (FeatureMask.hasFeature(context.detectedFeature, FeatureMask.ANTI_REELS) && context.antiReelsEnabled) {
-            return PolicyDecision(PolicyDecision.Action.BLOCK, "anti_reels_triggered")
-        }
-
-        if (FeatureMask.hasFeature(context.detectedFeature, FeatureMask.ANTI_SCROLL) && context.antiScrollEnabled) {
+        if (context.isAntiScrollSurface && context.antiScrollEnabled) {
             return PolicyDecision(PolicyDecision.Action.BLOCK, "anti_scroll_triggered")
         }
 
-        if (FeatureMask.hasFeature(context.detectedFeature, FeatureMask.BROWSER_BLOCKING) && context.browserBlockEnabled) {
+        if (context.isBrowserSurface && context.browserBlockEnabled) {
             return PolicyDecision(PolicyDecision.Action.BLOCK, "browser_block_triggered")
         }
 
+        if (context.isAntiReelsSurface && context.antiReelsEnabled) {
+            return PolicyDecision(PolicyDecision.Action.BLOCK, "anti_reels_triggered")
+        }
+
         return PolicyDecision(PolicyDecision.Action.ALLOW, "no_rule_matched")
+    }
+
+    private fun evaluateInstagram(context: DecisionContext): PolicyDecision? {
+        val settings = context.instagramSettings ?: return null
+        val surface = context.surfaceName
+
+        return when (surface) {
+            "REELS" -> {
+                if (settings.hideReelsOnHome) {
+                    PolicyDecision(PolicyDecision.Action.BLOCK, "instagram_reels_blocked")
+                } else null
+            }
+            "STORIES" -> {
+                if (settings.blockStories) {
+                    PolicyDecision(PolicyDecision.Action.BLOCK, "instagram_stories_blocked")
+                } else null
+            }
+            "MAIN_FEED" -> {
+                if (settings.blockMainFeed) {
+                    PolicyDecision(PolicyDecision.Action.REDIRECT, "instagram_feed_blocked", "direct")
+                } else null
+            }
+            "COMMENTS" -> {
+                if (settings.blockComments) {
+                    PolicyDecision(PolicyDecision.Action.BLOCK, "instagram_comments_blocked")
+                } else null
+            }
+            "EXPLORE" -> {
+                if (settings.blockExplore) {
+                    PolicyDecision(PolicyDecision.Action.BLOCK, "instagram_explore_blocked")
+                } else null
+            }
+            "DM" -> {
+                if (settings.allowReelsInDMs) {
+                    PolicyDecision(PolicyDecision.Action.ALLOW, "instagram_dm_allowed")
+                } else {
+                    PolicyDecision(PolicyDecision.Action.BLOCK, "instagram_dm_blocked")
+                }
+            }
+            else -> null
+        }
     }
 
     fun buildContext(
@@ -117,7 +140,7 @@ object PolicyEngine {
         confidence: Double,
         detectedFeature: Int,
         surfaceName: String,
-        instagramSettings: com.scrolllock.app.data.model.InstagramAntiReelsSettings? = null
+        instagramSettings: InstagramAntiReelsSettings? = null
     ): DecisionContext {
         return DecisionContext(
             packageName = packageName,
@@ -131,12 +154,7 @@ object PolicyEngine {
             confidence = confidence,
             detectedFeature = detectedFeature,
             surfaceName = surfaceName,
-            instagramReelsBlocked = instagramSettings?.hideReelsOnHome ?: true,
-            instagramStoriesBlocked = instagramSettings?.blockStories ?: false,
-            instagramFeedBlocked = instagramSettings?.blockMainFeed ?: false,
-            instagramCommentsBlocked = instagramSettings?.blockComments ?: false,
-            instagramExploreBlocked = instagramSettings?.blockExplore ?: true,
-            instagramAllowReelsInDM = instagramSettings?.allowReelsInDMs ?: true
+            instagramSettings = instagramSettings
         )
     }
 }
@@ -209,12 +227,23 @@ object CooldownEngine {
         extraApps: Set<String>
     ): Boolean {
         if (sourceApp.isNullOrEmpty()) return false
+        if (cooldownStart <= 0) return false
+
         val isSource = currentPackage == sourceApp
         val isExtra = currentPackage in extraApps
         if (!isSource && !isExtra) return false
-        if (cooldownStart <= 0) return false
+
         val expiry = cooldownStart + cooldownDurationMinutes * 60_000L
         return System.currentTimeMillis() < expiry
+    }
+
+    fun isSourceOrExtraApp(
+        sourceApp: String?,
+        currentPackage: String,
+        extraApps: Set<String>
+    ): Boolean {
+        if (sourceApp.isNullOrEmpty()) return false
+        return currentPackage == sourceApp || currentPackage in extraApps
     }
 
     fun remainingMinutes(sourceApp: String?, cooldownStart: Long, cooldownDurationMinutes: Int): Long {

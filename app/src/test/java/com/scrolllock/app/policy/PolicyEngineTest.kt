@@ -1,6 +1,7 @@
 package com.scrolllock.app.policy
 
 import com.scrolllock.app.data.model.FeatureMask
+import com.scrolllock.app.data.model.InstagramAntiReelsSettings
 import com.scrolllock.app.data.model.ScheduleRule
 import com.scrolllock.app.data.model.TimeSlot
 import org.junit.Assert.*
@@ -98,10 +99,12 @@ class PolicyEngineTest {
         val context = DecisionContext(
             packageName = "com.instagram.android",
             appEnabled = true,
+            antiReelsEnabled = true,
             cooldownActive = true
         )
         val decision = PolicyEngine.evaluate(context)
         assertEquals(PolicyDecision.Action.BLOCK, decision.action)
+        assertEquals("cooldown_active", decision.reason)
     }
 
     @Test
@@ -118,12 +121,13 @@ class PolicyEngineTest {
             confidence = 0.80,
             detectedFeature = FeatureMask.ANTI_REELS,
             surfaceName = "MAIN_FEED",
-            instagramSettings = com.scrolllock.app.data.model.InstagramAntiReelsSettings(
+            instagramSettings = InstagramAntiReelsSettings(
                 blockMainFeed = true
             )
         )
         val decision = PolicyEngine.evaluate(context)
         assertEquals(PolicyDecision.Action.REDIRECT, decision.action)
+        assertEquals("direct", decision.redirectTarget)
     }
 
     @Test
@@ -140,11 +144,151 @@ class PolicyEngineTest {
             confidence = 0.85,
             detectedFeature = FeatureMask.ANTI_REELS,
             surfaceName = "DM",
-            instagramSettings = com.scrolllock.app.data.model.InstagramAntiReelsSettings(
+            instagramSettings = InstagramAntiReelsSettings(
                 allowReelsInDMs = true
             )
         )
         val decision = PolicyEngine.evaluate(context)
         assertEquals(PolicyDecision.Action.ALLOW, decision.action)
+    }
+
+    @Test
+    fun `PolicyEngine blocks Instagram explore when configured`() {
+        val context = PolicyEngine.buildContext(
+            packageName = "com.instagram.android",
+            appEnabled = true,
+            antiReelsEnabled = true,
+            antiScrollEnabled = false,
+            browserBlockEnabled = false,
+            scheduleActive = true,
+            cooldownActive = false,
+            blockingSessionActive = false,
+            confidence = 0.85,
+            detectedFeature = FeatureMask.ANTI_REELS,
+            surfaceName = "EXPLORE",
+            instagramSettings = InstagramAntiReelsSettings(
+                blockExplore = true
+            )
+        )
+        val decision = PolicyEngine.evaluate(context)
+        assertEquals(PolicyDecision.Action.BLOCK, decision.action)
+        assertEquals("instagram_explore_blocked", decision.reason)
+    }
+
+    @Test
+    fun `PolicyEngine blocks Instagram stories when configured`() {
+        val context = PolicyEngine.buildContext(
+            packageName = "com.instagram.android",
+            appEnabled = true,
+            antiReelsEnabled = true,
+            antiScrollEnabled = false,
+            browserBlockEnabled = false,
+            scheduleActive = true,
+            cooldownActive = false,
+            blockingSessionActive = false,
+            confidence = 0.85,
+            detectedFeature = FeatureMask.ANTI_REELS,
+            surfaceName = "STORIES",
+            instagramSettings = InstagramAntiReelsSettings(
+                blockStories = true
+            )
+        )
+        val decision = PolicyEngine.evaluate(context)
+        assertEquals(PolicyDecision.Action.BLOCK, decision.action)
+        assertEquals("instagram_stories_blocked", decision.reason)
+    }
+
+    @Test
+    fun `PolicyEngine blocks anti-scroll when triggered`() {
+        val context = PolicyEngine.buildContext(
+            packageName = "com.instagram.android",
+            appEnabled = true,
+            antiReelsEnabled = false,
+            antiScrollEnabled = true,
+            browserBlockEnabled = false,
+            scheduleActive = true,
+            cooldownActive = false,
+            blockingSessionActive = false,
+            confidence = 0.85,
+            detectedFeature = FeatureMask.ANTI_SCROLL,
+            surfaceName = "REELS"
+        )
+        val decision = PolicyEngine.evaluate(context)
+        assertEquals(PolicyDecision.Action.BLOCK, decision.action)
+        assertEquals("anti_scroll_triggered", decision.reason)
+    }
+
+    @Test
+    fun `PolicyEngine allows when no features enabled`() {
+        val context = PolicyEngine.buildContext(
+            packageName = "com.instagram.android",
+            appEnabled = true,
+            antiReelsEnabled = false,
+            antiScrollEnabled = false,
+            browserBlockEnabled = false,
+            scheduleActive = true,
+            cooldownActive = false,
+            blockingSessionActive = false,
+            confidence = 0.85,
+            detectedFeature = FeatureMask.ANTI_REELS,
+            surfaceName = "REELS"
+        )
+        val decision = PolicyEngine.evaluate(context)
+        assertEquals(PolicyDecision.Action.ALLOW, decision.action)
+        assertEquals("no_features_enabled", decision.reason)
+    }
+
+    @Test
+    fun `PolicyEngine allows when schedule inactive`() {
+        val context = PolicyEngine.buildContext(
+            packageName = "com.instagram.android",
+            appEnabled = true,
+            antiReelsEnabled = true,
+            antiScrollEnabled = false,
+            browserBlockEnabled = false,
+            scheduleActive = false,
+            cooldownActive = false,
+            blockingSessionActive = false,
+            confidence = 0.85,
+            detectedFeature = FeatureMask.ANTI_REELS,
+            surfaceName = "REELS"
+        )
+        val decision = PolicyEngine.evaluate(context)
+        assertEquals(PolicyDecision.Action.ALLOW, decision.action)
+        assertEquals("schedule_inactive", decision.reason)
+    }
+
+    @Test
+    fun `PolicyEngine blocks timeout when active`() {
+        val context = DecisionContext(
+            packageName = "com.instagram.android",
+            appEnabled = true,
+            antiReelsEnabled = true,
+            blockingSessionActive = true
+        )
+        val decision = PolicyEngine.evaluate(context)
+        assertEquals(PolicyDecision.Action.BLOCK, decision.action)
+        assertEquals("timeout_active", decision.reason)
+    }
+
+    @Test
+    fun `DecisionContext isInstagram helper`() {
+        val igContext = DecisionContext(packageName = "com.instagram.android")
+        val ytContext = DecisionContext(packageName = "com.google.android.youtube")
+
+        assertTrue(igContext.isInstagram)
+        assertFalse(ytContext.isInstagram)
+    }
+
+    @Test
+    fun `DecisionContext surface type helpers`() {
+        val antiScrollCtx = DecisionContext(packageName = "com.test", detectedFeature = FeatureMask.ANTI_SCROLL)
+        val antiReelsCtx = DecisionContext(packageName = "com.test", detectedFeature = FeatureMask.ANTI_REELS)
+        val browserCtx = DecisionContext(packageName = "com.test", detectedFeature = FeatureMask.BROWSER_BLOCKING)
+
+        assertTrue(antiScrollCtx.isAntiScrollSurface)
+        assertTrue(antiReelsCtx.isAntiReelsSurface)
+        assertTrue(browserCtx.isBrowserSurface)
+        assertFalse(antiScrollCtx.isAntiReelsSurface)
     }
 }

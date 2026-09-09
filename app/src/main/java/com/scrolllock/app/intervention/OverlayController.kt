@@ -5,6 +5,7 @@ import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.Button
@@ -13,29 +14,46 @@ import android.widget.TextView
 import com.scrolllock.app.R
 
 class OverlayController(private val context: Context) {
+    companion object {
+        private const val TAG = "OverlayController"
+        private const val GEOMETRY_THRESHOLD = 8
+        private const val DUPLICATE_SUPPRESS_MS = 2000L
+    }
+
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    @Volatile
     private var overlayView: LinearLayout? = null
+
+    @Volatile
     private var overlayVisible = false
+
     private var previousBounds: Rect? = null
     private var currentTitle: String = ""
     private var currentReason: String = ""
     private var dismissRunnable: Runnable? = null
-
-    private val geometryThreshold = 8
+    private var lastShowTime = 0L
+    private var lastShowPackage: String? = null
 
     fun show(targetRect: Rect?, title: String = "Blocked by ScrollLock", reason: String = "Take a break!") {
-        if (overlayVisible && overlayView != null) {
-            if (title == currentTitle && reason == currentReason) {
-                if (targetRect != null && previousBounds != null) {
-                    val dx = Math.abs(targetRect.left - previousBounds!!.left)
-                    val dy = Math.abs(targetRect.top - previousBounds!!.top)
-                    if (dx < geometryThreshold && dy < geometryThreshold) return
-                }
-            }
-            removeOverlay()
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { show(targetRect, title, reason) }
+            return
         }
+
+        val now = System.currentTimeMillis()
+        if (now - lastShowTime < DUPLICATE_SUPPRESS_MS && title == currentTitle) {
+            if (targetRect != null && previousBounds != null) {
+                val dx = kotlin.math.abs(targetRect.left - previousBounds!!.left)
+                val dy = kotlin.math.abs(targetRect.top - previousBounds!!.top)
+                if (dx < GEOMETRY_THRESHOLD && dy < GEOMETRY_THRESHOLD) return
+            } else if (targetRect == null && previousBounds == null) {
+                return
+            }
+        }
+
+        removeOverlay()
 
         val layout = createOverlayLayout(title, reason, showGoBack = true)
         val params = createLayoutParams(targetRect)
@@ -44,18 +62,26 @@ class OverlayController(private val context: Context) {
             windowManager.addView(layout, params)
             overlayView = layout
             overlayVisible = true
-            previousBounds = targetRect
+            previousBounds = targetRect?.let { Rect(it) }
             currentTitle = title
             currentReason = reason
+            lastShowTime = now
         } catch (e: Exception) {
-            // Overlay permission not granted
+            Log.w(TAG, "Failed to add overlay: ${e.message}")
         }
     }
 
     fun showFullScreen(title: String = "Blocked by ScrollLock", reason: String = "Time to take a break!") {
-        if (overlayVisible && overlayView != null && title == currentTitle) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { showFullScreen(title, reason) }
             return
         }
+
+        val now = System.currentTimeMillis()
+        if (overlayVisible && overlayView != null && title == currentTitle) {
+            if (now - lastShowTime < DUPLICATE_SUPPRESS_MS) return
+        }
+
         removeOverlay()
 
         val layout = createOverlayLayout(title, reason, showGoBack = true)
@@ -76,12 +102,18 @@ class OverlayController(private val context: Context) {
             previousBounds = null
             currentTitle = title
             currentReason = reason
+            lastShowTime = now
         } catch (e: Exception) {
-            // Overlay permission not granted
+            Log.w(TAG, "Failed to add fullscreen overlay: ${e.message}")
         }
     }
 
     fun showWithCountdown(title: String, reason: String, countdownSeconds: Int, onExpired: () -> Unit) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { showWithCountdown(title, reason, countdownSeconds, onExpired) }
+            return
+        }
+
         removeOverlay()
 
         val countdownText = TextView(context).apply {
@@ -132,6 +164,7 @@ class OverlayController(private val context: Context) {
             previousBounds = null
             currentTitle = title
             currentReason = reason
+            lastShowTime = System.currentTimeMillis()
 
             var remaining = countdownSeconds
             val countdownRunnable = object : Runnable {
@@ -149,7 +182,7 @@ class OverlayController(private val context: Context) {
             dismissRunnable = countdownRunnable
             mainHandler.post(countdownRunnable)
         } catch (e: Exception) {
-            // Overlay permission not granted
+            Log.w(TAG, "Failed to add countdown overlay: ${e.message}")
         }
     }
 
@@ -163,8 +196,10 @@ class OverlayController(private val context: Context) {
         overlayView?.let {
             try {
                 windowManager.removeView(it)
+            } catch (e: IllegalArgumentException) {
+                // View was already removed
             } catch (e: Exception) {
-                // Already removed
+                Log.w(TAG, "Error removing overlay: ${e.message}")
             }
         }
         overlayView = null
@@ -227,4 +262,8 @@ class OverlayController(private val context: Context) {
     fun cleanup() {
         hide()
     }
+
+    fun isOverlayVisible(): Boolean = overlayVisible
+
+    fun getCurrentTitle(): String = currentTitle
 }

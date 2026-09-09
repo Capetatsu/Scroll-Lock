@@ -50,7 +50,7 @@ fun DashboardScreen() {
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Icon(
-                        if (protectionEnabled) Icons.Default.Shield else Icons.Default.ShieldOutlined,
+                        if (protectionEnabled) Icons.Default.Shield else Icons.Default.Shield,
                         contentDescription = null,
                         tint = if (protectionEnabled)
                             MaterialTheme.colorScheme.primary
@@ -133,7 +133,7 @@ fun DashboardScreen() {
                         },
                         modifier = Modifier.weight(1f)
                     ) {
-                        Icon(Icons.Default.layers, contentDescription = null)
+                        Icon(Icons.Default.Layers, contentDescription = null)
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("Overlay")
                     }

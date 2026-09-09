@@ -56,7 +56,7 @@ fun SettingsScreen() {
                 SettingItem(
                     title = "Overlay Permission",
                     subtitle = "Required for blocking overlays",
-                    icon = Icons.Default.layers,
+                    icon = Icons.Default.Layers,
                     onClick = {
                         val intent = Intent(
                             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -79,7 +79,7 @@ fun SettingsScreen() {
                 SettingItem(
                     title = "Usage Access",
                     subtitle = "Required for app usage stats",
-                    icon = Icons.Default.Usage,
+                    icon = Icons.Default.Info,
                     onClick = {
                         val intent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
                         context.startActivity(intent)

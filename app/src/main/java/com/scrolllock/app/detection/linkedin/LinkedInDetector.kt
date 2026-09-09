@@ -9,25 +9,41 @@ class LinkedInDetector : ContentDetector {
     companion object {
         private const val VIDEO_PLAYER = "com.linkedin.android:id/video_player"
         private const val MEDIA_CONTAINER = "com.linkedin.android:id/media_container"
+        private const val VIDEO_FEED = "com.linkedin.android:id/video_feed"
     }
 
     override fun classify(root: AccessibilityNodeInfo): List<DetectionCandidate> {
         val candidates = mutableListOf<DetectionCandidate>()
 
-        if (isOnVideo(root)) {
-            candidates.add(DetectionCandidate(
-                packageName = "com.linkedin.android",
-                surface = DetectionSurface.VIDEO_FEED,
-                confidence = 0.55,
-                reasonCodes = listOf("video_player")
-            ))
-        }
+        detectVideo(root)?.let { candidates.add(it) }
 
         return candidates
     }
 
-    private fun isOnVideo(root: AccessibilityNodeInfo): Boolean {
-        return NodeUtils.hasDescendantWithId(root, VIDEO_PLAYER) ||
-                NodeUtils.hasDescendantWithId(root, MEDIA_CONTAINER)
+    private fun detectVideo(root: AccessibilityNodeInfo): DetectionCandidate? {
+        val signals = mutableListOf<String>()
+        var confidence = 0.0
+
+        if (NodeUtils.hasDescendantWithId(root, VIDEO_PLAYER)) {
+            signals.add("video_player")
+            confidence += 0.25
+        }
+        if (NodeUtils.hasDescendantWithId(root, MEDIA_CONTAINER)) {
+            signals.add("media_container")
+            confidence += 0.20
+        }
+        if (NodeUtils.hasDescendantWithId(root, VIDEO_FEED)) {
+            signals.add("video_feed")
+            confidence += 0.15
+        }
+
+        if (signals.isEmpty()) return null
+
+        return DetectionCandidate(
+            packageName = "com.linkedin.android",
+            surface = DetectionSurface.VIDEO_FEED,
+            confidence = confidence.coerceAtMost(1.0),
+            reasonCodes = signals
+        )
     }
 }

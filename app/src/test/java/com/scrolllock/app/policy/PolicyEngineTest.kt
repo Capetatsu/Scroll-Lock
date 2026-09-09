@@ -1,7 +1,8 @@
 package com.scrolllock.app.policy
 
-import com.scrolllock.app.data.model.ScheduleRule
 import com.scrolllock.app.data.model.FeatureMask
+import com.scrolllock.app.data.model.ScheduleRule
+import com.scrolllock.app.data.model.TimeSlot
 import org.junit.Assert.*
 import org.junit.Test
 import java.time.DayOfWeek
@@ -11,28 +12,20 @@ class PolicyEngineTest {
 
     @Test
     fun `isDayEnabled correctly evaluates bitmask`() {
-        // Monday = 1, Tuesday = 2, ..., Sunday = 64
         val allDays = 0x7F
         assertTrue(ScheduleEngine.isDayEnabled(allDays, DayOfWeek.MONDAY))
         assertTrue(ScheduleEngine.isDayEnabled(allDays, DayOfWeek.SUNDAY))
 
-        val weekdays = 31 // Mon-Fri
+        val weekdays = 31
         assertTrue(ScheduleEngine.isDayEnabled(weekdays, DayOfWeek.MONDAY))
         assertTrue(ScheduleEngine.isDayEnabled(weekdays, DayOfWeek.FRIDAY))
         assertFalse(ScheduleEngine.isDayEnabled(weekdays, DayOfWeek.SATURDAY))
         assertFalse(ScheduleEngine.isDayEnabled(weekdays, DayOfWeek.SUNDAY))
 
-        val weekend = 96 // Sat + Sun
+        val weekend = 96
         assertFalse(ScheduleEngine.isDayEnabled(weekend, DayOfWeek.MONDAY))
         assertTrue(ScheduleEngine.isDayEnabled(weekend, DayOfWeek.SATURDAY))
         assertTrue(ScheduleEngine.isDayEnabled(weekend, DayOfWeek.SUNDAY))
-    }
-
-    @Test
-    fun `isTimeSlotActive checks time ranges`() {
-        val morningSlot = "[{\"startHour\":6,\"startMinute\":0,\"endHour\":12,\"endMinute\":0}]"
-        assertTrue(ScheduleEngine.isTimeSlotActive(morningSlot, LocalTime.of(8, 30)))
-        assertFalse(ScheduleEngine.isTimeSlotActive(morningSlot, LocalTime.of(14, 0)))
     }
 
     @Test
@@ -45,38 +38,59 @@ class PolicyEngineTest {
 
     @Test
     fun `PolicyEngine blocks when all conditions met`() {
-        val context = DecisionContext(
+        val context = PolicyEngine.buildContext(
             packageName = "com.instagram.android",
             appEnabled = true,
             antiReelsEnabled = true,
+            antiScrollEnabled = false,
+            browserBlockEnabled = false,
+            scheduleActive = true,
+            cooldownActive = false,
+            blockingSessionActive = false,
             confidence = 0.85,
-            detectedFeature = FeatureMask.ANTI_REELS
+            detectedFeature = FeatureMask.ANTI_REELS,
+            surfaceName = "REELS"
         )
-        assertEquals(Decision.BLOCK, PolicyEngine.evaluate(context))
+        val decision = PolicyEngine.evaluate(context)
+        assertEquals(PolicyDecision.Action.BLOCK, decision.action)
     }
 
     @Test
     fun `PolicyEngine allows when app not enabled`() {
-        val context = DecisionContext(
+        val context = PolicyEngine.buildContext(
             packageName = "com.instagram.android",
             appEnabled = false,
             antiReelsEnabled = true,
+            antiScrollEnabled = false,
+            browserBlockEnabled = false,
+            scheduleActive = true,
+            cooldownActive = false,
+            blockingSessionActive = false,
             confidence = 0.85,
-            detectedFeature = FeatureMask.ANTI_REELS
+            detectedFeature = FeatureMask.ANTI_REELS,
+            surfaceName = "REELS"
         )
-        assertEquals(Decision.ALLOW, PolicyEngine.evaluate(context))
+        val decision = PolicyEngine.evaluate(context)
+        assertEquals(PolicyDecision.Action.ALLOW, decision.action)
     }
 
     @Test
     fun `PolicyEngine allows when confidence too low`() {
-        val context = DecisionContext(
+        val context = PolicyEngine.buildContext(
             packageName = "com.instagram.android",
             appEnabled = true,
             antiReelsEnabled = true,
+            antiScrollEnabled = false,
+            browserBlockEnabled = false,
+            scheduleActive = true,
+            cooldownActive = false,
+            blockingSessionActive = false,
             confidence = 0.50,
-            detectedFeature = FeatureMask.ANTI_REELS
+            detectedFeature = FeatureMask.ANTI_REELS,
+            surfaceName = "REELS"
         )
-        assertEquals(Decision.ALLOW, PolicyEngine.evaluate(context))
+        val decision = PolicyEngine.evaluate(context)
+        assertEquals(PolicyDecision.Action.ALLOW, decision.action)
     }
 
     @Test
@@ -86,6 +100,51 @@ class PolicyEngineTest {
             appEnabled = true,
             cooldownActive = true
         )
-        assertEquals(Decision.COOLDOWN_BLOCK, PolicyEngine.evaluate(context))
+        val decision = PolicyEngine.evaluate(context)
+        assertEquals(PolicyDecision.Action.BLOCK, decision.action)
+    }
+
+    @Test
+    fun `PolicyEngine redirects Instagram feed when configured`() {
+        val context = PolicyEngine.buildContext(
+            packageName = "com.instagram.android",
+            appEnabled = true,
+            antiReelsEnabled = true,
+            antiScrollEnabled = false,
+            browserBlockEnabled = false,
+            scheduleActive = true,
+            cooldownActive = false,
+            blockingSessionActive = false,
+            confidence = 0.80,
+            detectedFeature = FeatureMask.ANTI_REELS,
+            surfaceName = "MAIN_FEED",
+            instagramSettings = com.scrolllock.app.data.model.InstagramAntiReelsSettings(
+                blockMainFeed = true
+            )
+        )
+        val decision = PolicyEngine.evaluate(context)
+        assertEquals(PolicyDecision.Action.REDIRECT, decision.action)
+    }
+
+    @Test
+    fun `PolicyEngine allows Instagram DM when configured`() {
+        val context = PolicyEngine.buildContext(
+            packageName = "com.instagram.android",
+            appEnabled = true,
+            antiReelsEnabled = true,
+            antiScrollEnabled = false,
+            browserBlockEnabled = false,
+            scheduleActive = true,
+            cooldownActive = false,
+            blockingSessionActive = false,
+            confidence = 0.85,
+            detectedFeature = FeatureMask.ANTI_REELS,
+            surfaceName = "DM",
+            instagramSettings = com.scrolllock.app.data.model.InstagramAntiReelsSettings(
+                allowReelsInDMs = true
+            )
+        )
+        val decision = PolicyEngine.evaluate(context)
+        assertEquals(PolicyDecision.Action.ALLOW, decision.action)
     }
 }

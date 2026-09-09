@@ -5,7 +5,9 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.runBlocking
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "scrolllock_settings")
 
@@ -38,6 +40,13 @@ class PreferencesManager(private val context: Context) {
     val schedulesEnabled: Flow<Boolean> = context.dataStore.data.map { it[SCHEDULES_ENABLED] ?: false }
     val cooldownEnabled: Flow<Boolean> = context.dataStore.data.map { it[COOLDOWN_ENABLED] ?: false }
     val debugMode: Flow<Boolean> = context.dataStore.data.map { it[DEBUG_MODE] ?: false }
+
+    fun isProtectionEnabledBlocking(): Boolean = runBlocking { protectionEnabled.first() }
+    fun isAntiScrollEnabledBlocking(): Boolean = runBlocking { antiScrollEnabled.first() }
+    fun isAntiReelsEnabledBlocking(): Boolean = runBlocking { antiReelsEnabled.first() }
+    fun isBrowserBlockEnabledBlocking(): Boolean = runBlocking { browserBlockEnabled.first() }
+    fun isSchedulesEnabledBlocking(): Boolean = runBlocking { schedulesEnabled.first() }
+    fun isCooldownEnabledBlocking(): Boolean = runBlocking { cooldownEnabled.first() }
 
     suspend fun setProtectionEnabled(enabled: Boolean) {
         context.dataStore.edit { it[PROTECTION_ENABLED] = enabled }
@@ -132,11 +141,21 @@ class PreferencesManager(private val context: Context) {
         start + duration
     }
 
+    fun getCooldownSourceAppBlocking(): String = runBlocking {
+        context.dataStore.data.first()[COOLDOWN_SOURCE_APP] ?: ""
+    }
+
+    fun getCooldownDurationBlocking(): Int = runBlocking {
+        context.dataStore.data.first()[COOLDOWN_DURATION_MINUTES] ?: 30
+    }
+
+    fun getCooldownStartBlocking(): Long = runBlocking {
+        context.dataStore.data.first()[COOLDOWN_START] ?: 0L
+    }
+
     fun setDebugMode(enabled: Boolean) {
         runBlocking {
             context.dataStore.edit { it[DEBUG_MODE] = enabled }
         }
     }
-
-    private val runBlocking = kotlinx.coroutines.runBlocking
 }

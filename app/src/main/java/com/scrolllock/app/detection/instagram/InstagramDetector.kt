@@ -18,105 +18,229 @@ class InstagramDetector : ContentDetector {
         private const val LIKE_COUNT = "com.instagram.android:id/like_count"
         private const val INBOX_LIST = "com.instagram.android:id/inbox_refreshable_thread_list_recyclerview"
         private const val DIRECT_THREAD_HEADER = "com.instagram.android:id/direct_thread_header"
+        private const val STORIES_TRAY = "com.instagram.android:id/stories_tray_container"
+        private const val STORY_RING = "com.instagram.android:id/story_ring"
+        private const val COMMENT_CONTAINER = "com.instagram.android:id/comment_thread_container"
+        private const val COMMENT_INPUT = "com.instagram.android:id/layout_comment_thread_edittext"
+        private const val NAVIGATION_TAB_BAR = "com.instagram.android:id/tab_bar"
+        private const val REEL_VIEW_PAGER = "com.instagram.android:id/reels ViewPager"
 
         private const val CONTENT_DESC_REELS = "Reels"
-        private const val CONTENT_DESC_REELS_HU = "Reelek"
         private const val CONTENT_DESC_EXPLORE = "Explore"
         private const val CONTENT_DESC_STORIES = "Stories"
+        private const val CONTENT_DESC_DIRECT = "Direct"
+        private const val CONTENT_DESC_COMMENTS = "Comments"
+        private const val CONTENT_DESC_HOME = "Home"
+        private const val CONTENT_DESC_SEARCH = "Search"
+        private const val CONTENT_DESC_CREATE = "Create"
+        private const val CONTENT_DESC_LIKES = "Likes"
     }
 
     override fun classify(root: AccessibilityNodeInfo): List<DetectionCandidate> {
         val candidates = mutableListOf<DetectionCandidate>()
 
-        if (hasReelsIndicator(root)) {
-            candidates.add(DetectionCandidate(
-                packageName = "com.instagram.android",
-                surface = DetectionSurface.REELS,
-                confidence = calculateReelsConfidence(root),
-                bounds = findReelsBounds(root),
-                reasonCodes = listOf("reel_ids", "reels_tray")
-            ))
-        }
-
-        if (hasStoriesIndicator(root)) {
-            candidates.add(DetectionCandidate(
-                packageName = "com.instagram.android",
-                surface = DetectionSurface.STORIES,
-                confidence = 0.75,
-                reasonCodes = listOf("stories_descriptor")
-            ))
-        }
-
-        if (isOnExplore(root)) {
-            candidates.add(DetectionCandidate(
-                packageName = "com.instagram.android",
-                surface = DetectionSurface.EXPLORE,
-                confidence = 0.80,
-                reasonCodes = listOf("explore_action_bar")
-            ))
-        }
-
-        if (isOnFeed(root)) {
-            candidates.add(DetectionCandidate(
-                packageName = "com.instagram.android",
-                surface = DetectionSurface.MAIN_FEED,
-                confidence = 0.70,
-                reasonCodes = listOf("feed_tab_selected")
-            ))
-        }
-
-        if (isInDM(root)) {
-            candidates.add(DetectionCandidate(
-                packageName = "com.instagram.android",
-                surface = DetectionSurface.DM,
-                confidence = 0.85,
-                reasonCodes = listOf("direct_tab", "inbox_list")
-            ))
-        }
+        detectReels(root)?.let { candidates.add(it) }
+        detectStories(root)?.let { candidates.add(it) }
+        detectExplore(root)?.let { candidates.add(it) }
+        detectFeed(root)?.let { candidates.add(it) }
+        detectDM(root)?.let { candidates.add(it) }
+        detectComments(root)?.let { candidates.add(it) }
 
         return candidates
     }
 
-    private fun hasReelsIndicator(root: AccessibilityNodeInfo): Boolean {
-        return NodeUtils.hasDescendantWithId(root, REEL_ITEM_TOOLBAR) ||
-                NodeUtils.hasDescendantWithId(root, REELS_TRAY) ||
-                NodeUtils.hasDescendantWithId(root, ROOT_CLIPS) ||
-                NodeUtils.hasDescendantWithId(root, CLIPS_AUTHOR) ||
-                hasContentDescription(root, CONTENT_DESC_REELS)
+    private fun detectReels(root: AccessibilityNodeInfo): DetectionCandidate? {
+        val signals = mutableListOf<String>()
+        var confidence = 0.0
+
+        if (NodeUtils.hasDescendantWithId(root, REEL_ITEM_TOOLBAR)) {
+            signals.add("reel_item_toolbar_container")
+            confidence += 0.30
+        }
+        if (NodeUtils.hasDescendantWithId(root, REELS_TRAY)) {
+            signals.add("reels_tray_container")
+            confidence += 0.20
+        }
+        if (NodeUtils.hasDescendantWithId(root, ROOT_CLIPS)) {
+            signals.add("root_clips_layout")
+            confidence += 0.15
+        }
+        if (NodeUtils.hasDescendantWithId(root, CLIPS_AUTHOR)) {
+            signals.add("clips_author_username")
+            confidence += 0.10
+        }
+        if (NodeUtils.hasDescendantWithId(root, REEL_VIEW_PAGER)) {
+            signals.add("reels_view_pager")
+            confidence += 0.10
+        }
+        if (hasContentDescription(root, CONTENT_DESC_REELS)) {
+            signals.add("content_desc_reels")
+            confidence += 0.10
+        }
+        if (NodeUtils.hasDescendantWithId(root, LIKE_COUNT)) {
+            signals.add("like_count_visible")
+            confidence += 0.05
+        }
+
+        if (signals.isEmpty()) return null
+
+        val bounds = findReelsBounds(root)
+        return DetectionCandidate(
+            packageName = "com.instagram.android",
+            surface = DetectionSurface.REELS,
+            confidence = confidence.coerceAtMost(1.0),
+            bounds = bounds,
+            reasonCodes = signals,
+            nodeReference = NodeUtils.findNodeById(root, REEL_ITEM_TOOLBAR)
+                ?: NodeUtils.findNodeById(root, ROOT_CLIPS)
+        )
     }
 
-    private fun calculateReelsConfidence(root: AccessibilityNodeInfo): Double {
-        var confidence = 0.55
-        if (NodeUtils.hasDescendantWithId(root, REEL_ITEM_TOOLBAR)) confidence += 0.20
-        if (NodeUtils.hasDescendantWithId(root, REELS_TRAY)) confidence += 0.15
-        if (NodeUtils.hasDescendantWithId(root, ROOT_CLIPS)) confidence += 0.10
-        if (hasContentDescription(root, CONTENT_DESC_REELS)) confidence += 0.10
-        return confidence.coerceAtMost(1.0)
+    private fun detectStories(root: AccessibilityNodeInfo): DetectionCandidate? {
+        val signals = mutableListOf<String>()
+        var confidence = 0.0
+
+        if (NodeUtils.hasDescendantWithId(root, STORIES_TRAY)) {
+            signals.add("stories_tray_container")
+            confidence += 0.35
+        }
+        if (NodeUtils.hasDescendantWithId(root, STORY_RING)) {
+            signals.add("story_ring")
+            confidence += 0.25
+        }
+        if (hasContentDescription(root, CONTENT_DESC_STORIES)) {
+            signals.add("content_desc_stories")
+            confidence += 0.20
+        }
+
+        if (signals.isEmpty()) return null
+
+        return DetectionCandidate(
+            packageName = "com.instagram.android",
+            surface = DetectionSurface.STORIES,
+            confidence = confidence.coerceAtMost(1.0),
+            reasonCodes = signals
+        )
+    }
+
+    private fun detectExplore(root: AccessibilityNodeInfo): DetectionCandidate? {
+        val signals = mutableListOf<String>()
+        var confidence = 0.0
+
+        if (NodeUtils.hasDescendantWithId(root, EXPLORE_ACTION_BAR)) {
+            signals.add("explore_action_bar")
+            confidence += 0.40
+        }
+        if (hasContentDescription(root, CONTENT_DESC_SEARCH)) {
+            signals.add("content_desc_search")
+            confidence += 0.20
+        }
+        if (hasContentDescription(root, CONTENT_DESC_EXPLORE)) {
+            signals.add("content_desc_explore")
+            confidence += 0.20
+        }
+
+        if (signals.isEmpty()) return null
+
+        return DetectionCandidate(
+            packageName = "com.instagram.android",
+            surface = DetectionSurface.EXPLORE,
+            confidence = confidence.coerceAtMost(1.0),
+            reasonCodes = signals
+        )
+    }
+
+    private fun detectFeed(root: AccessibilityNodeInfo): DetectionCandidate? {
+        val signals = mutableListOf<String>()
+        var confidence = 0.0
+
+        val feedTab = NodeUtils.findNodeById(root, FEED_TAB)
+        if (feedTab != null && NodeUtils.isSelected(feedTab)) {
+            signals.add("feed_tab_selected")
+            confidence += 0.35
+        }
+        if (NodeUtils.hasDescendantWithId(root, FEED_TAB)) {
+            signals.add("feed_tab_present")
+            confidence += 0.15
+        }
+        if (hasContentDescription(root, CONTENT_DESC_HOME)) {
+            signals.add("content_desc_home")
+            confidence += 0.15
+        }
+
+        if (signals.isEmpty()) return null
+
+        return DetectionCandidate(
+            packageName = "com.instagram.android",
+            surface = DetectionSurface.MAIN_FEED,
+            confidence = confidence.coerceAtMost(1.0),
+            reasonCodes = signals,
+            nodeReference = feedTab
+        )
+    }
+
+    private fun detectDM(root: AccessibilityNodeInfo): DetectionCandidate? {
+        val signals = mutableListOf<String>()
+        var confidence = 0.0
+
+        if (NodeUtils.hasDescendantWithId(root, DIRECT_TAB)) {
+            signals.add("direct_tab")
+            confidence += 0.30
+        }
+        if (NodeUtils.hasDescendantWithId(root, INBOX_LIST)) {
+            signals.add("inbox_thread_list")
+            confidence += 0.25
+        }
+        if (NodeUtils.hasDescendantWithId(root, DIRECT_THREAD_HEADER)) {
+            signals.add("direct_thread_header")
+            confidence += 0.25
+        }
+        if (hasContentDescription(root, CONTENT_DESC_DIRECT)) {
+            signals.add("content_desc_direct")
+            confidence += 0.15
+        }
+
+        if (signals.isEmpty()) return null
+
+        return DetectionCandidate(
+            packageName = "com.instagram.android",
+            surface = DetectionSurface.DM,
+            confidence = confidence.coerceAtMost(1.0),
+            reasonCodes = signals
+        )
+    }
+
+    private fun detectComments(root: AccessibilityNodeInfo): DetectionCandidate? {
+        val signals = mutableListOf<String>()
+        var confidence = 0.0
+
+        if (NodeUtils.hasDescendantWithId(root, COMMENT_CONTAINER)) {
+            signals.add("comment_thread_container")
+            confidence += 0.35
+        }
+        if (NodeUtils.hasDescendantWithId(root, COMMENT_INPUT)) {
+            signals.add("comment_input_visible")
+            confidence += 0.25
+        }
+        if (hasContentDescription(root, CONTENT_DESC_COMMENTS)) {
+            signals.add("content_desc_comments")
+            confidence += 0.20
+        }
+
+        if (signals.isEmpty()) return null
+
+        return DetectionCandidate(
+            packageName = "com.instagram.android",
+            surface = DetectionSurface.COMMENTS,
+            confidence = confidence.coerceAtMost(1.0),
+            reasonCodes = signals
+        )
     }
 
     private fun findReelsBounds(root: AccessibilityNodeInfo): Rect? {
         val node = NodeUtils.findNodeById(root, REEL_ITEM_TOOLBAR)
             ?: NodeUtils.findNodeById(root, ROOT_CLIPS)
         return NodeUtils.getBounds(node)
-    }
-
-    private fun hasStoriesIndicator(root: AccessibilityNodeInfo): Boolean {
-        return hasContentDescription(root, CONTENT_DESC_STORIES)
-    }
-
-    private fun isOnExplore(root: AccessibilityNodeInfo): Boolean {
-        return NodeUtils.hasDescendantWithId(root, EXPLORE_ACTION_BAR)
-    }
-
-    private fun isOnFeed(root: AccessibilityNodeInfo): Boolean {
-        val feedTab = NodeUtils.findNodeById(root, FEED_TAB)
-        return feedTab != null && NodeUtils.isSelected(feedTab)
-    }
-
-    private fun isInDM(root: AccessibilityNodeInfo): Boolean {
-        return NodeUtils.hasDescendantWithId(root, DIRECT_TAB) ||
-                NodeUtils.hasDescendantWithId(root, INBOX_LIST) ||
-                NodeUtils.hasDescendantWithId(root, DIRECT_THREAD_HEADER)
     }
 
     private fun hasContentDescription(root: AccessibilityNodeInfo, desc: String): Boolean {

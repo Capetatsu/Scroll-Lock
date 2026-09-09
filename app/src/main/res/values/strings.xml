@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ScrollLock</string>
+    <string name="accessibility_service_description">ScrollLock monitors app usage to help you stay focused. It detects and blocks short-form video content like Reels, Shorts, and TikTok, and can limit excessive scrolling.</string>
+    <string name="device_admin_description">ScrollLock uses device admin to prevent accidental uninstallation while protection is active.</string>
+
+    <string name="nav_dashboard">Dashboard</string>
+    <string name="nav_apps">Apps</string>
+    <string name="nav_antiscroll">Anti-Scroll</string>
+    <string name="nav_antireels">Anti-Reels</string>
+    <string name="nav_browser">Browser</string>
+    <string name="nav_schedules">Schedules</string>
+    <string name="nav_cooldown">Cooldown</string>
+    <string name="nav_statistics">Statistics</string>
+    <string name="nav_settings">Settings</string>
+
+    <string name="service_notification_channel">ScrollLock Protection</string>
+    <string name="service_notification_title">ScrollLock Active</string>
+    <string name="service_notification_text">Monitoring for distractions</string>
+
+    <string name="blocked_title">Blocked by ScrollLock</string>
+    <string name="blocked_subtitle">Take a break and do something productive!</string>
+    <string name="blocked_go_back">Go Back</string>
+    <string name="blocked_go_home">Go to Home Screen</string>
+
+    <string name="accessibility_disabled">Accessibility service is required</string>
+    <string name="overlay_permission_needed">Overlay permission is required</string>
+    <string name="grant_accessibility">Grant Accessibility</string>
+    <string name="grant_overlay">Grant Overlay Permission</string>
+
+    <string name="dashboard_protected_time">Protected Time Today</string>
+    <string name="dashboard_blocked_attempts">Blocked Attempts</string>
+    <string name="dashboard_active_rules">Active Rules</string>
+
+    <string name="settings_enable_protection">Enable Protection</string>
+    <string name="settings_enable_antiscroll">Enable Anti-Scroll</string>
+    <string name="settings_enable_antireels">Enable Anti-Reels</string>
+    <string name="settings_enable_browser_block">Enable Browser Blocking</string>
+    <string name="settings_enable_schedules">Enable Schedules</string>
+    <string name="settings_enable_cooldown">Enable Cross-App Cooldown</string>
+    <string name="settings_enable_device_admin">Enable Uninstall Protection</string>
+
+    <string name="blocked_attempt_blocked">Blocked</string>
+    <string name="blocked_attempt_allowed">Allowed</string>
+</resources>

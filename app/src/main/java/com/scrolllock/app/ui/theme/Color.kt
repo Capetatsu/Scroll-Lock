@@ -1,0 +1,27 @@
+package com.scrolllock.app.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
+val Primary = Color(0xFF1B5E20)
+val OnPrimary = Color(0xFFFFFFFF)
+val PrimaryContainer = Color(0xFFA5D6A7)
+val OnPrimaryContainer = Color(0xFF002204)
+val Secondary = Color(0xFF386A21)
+val OnSecondary = Color(0xFFFFFFFF)
+val SecondaryContainer = Color(0xFFB8F397)
+val OnSecondaryContainer = Color(0xFF072100)
+val Tertiary = Color(0xFF00695C)
+val OnTertiary = Color(0xFFFFFFFF)
+val TertiaryContainer = Color(0xFF80CBC4)
+val OnTertiaryContainer = Color(0xFF002021)
+val Error = Color(0xFFBA1A1A)
+val OnError = Color(0xFFFFFFFF)
+val Background = Color(0xFFFCFDF6)
+val OnBackground = Color(0xFF1A1C18)
+val Surface = Color(0xFFFCFDF6)
+val OnSurface = Color(0xFF1A1C18)
+val SurfaceVariant = Color(0xFFDFE4D7)
+val OnSurfaceVariant = Color(0xFF43483E)
+val Outline = Color(0xFF73796D)
+val InverseSurface = Color(0xFF2F312D)
+val InverseOnSurface = Color(0xFFF0F1EA)

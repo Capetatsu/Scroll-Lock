@@ -1,0 +1,4 @@
+-dontwarn javax.annotation.**
+-keep class com.scrolllock.app.data.model.** { *; }
+-keep class com.scrolllock.app.data.room.** { *; }
+-keepclassmembers class * extends androidx.room.RoomDatabase { public static *; }

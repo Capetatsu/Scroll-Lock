@@ -91,8 +91,12 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         Log.i(TAG, "Accessibility service connected")
 
+        val prefs = PreferencesManager(applicationContext)
+        val a11yEnabled = prefs.isAccessibilityServiceEnabled()
+        Log.i(TAG, "Accessibility service enabled in system: $a11yEnabled")
+
         db = ScrollLockDatabase.getInstance(applicationContext)
-        prefs = PreferencesManager(applicationContext)
+        this.prefs = prefs
         overlayController = OverlayController(applicationContext)
         domainMatcher = DomainMatcher()
         browserBlocker = BrowserContentBlocker(domainMatcher!!)

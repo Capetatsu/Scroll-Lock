@@ -1,10 +1,12 @@
 package com.scrolllock.app.data.preferences
 
 import android.content.Context
+import android.provider.Settings
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
@@ -165,4 +167,20 @@ class PreferencesManager(private val context: Context) {
     }
 
     fun isDebugModeBlocking(): Boolean = runBlocking { debugMode.first() }
+
+    fun isAccessibilityServiceEnabled(): Boolean {
+        val enabledServices = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+
+        val targetService = "com.scrolllock.app/com.scrolllock.app.accessibility.ScrollLockAccessibilityService"
+        return enabledServices.split(":").any { it == targetService }
+    }
+
+    val accessibilityServiceEnabled: MutableStateFlow<Boolean> = MutableStateFlow(isAccessibilityServiceEnabled())
+
+    fun refreshAccessibilityServiceState() {
+        accessibilityServiceEnabled.value = isAccessibilityServiceEnabled()
+    }
 }

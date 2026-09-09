@@ -20,8 +20,11 @@ fun DashboardScreen() {
     val context = LocalContext.current
     val prefs = remember { PreferencesManager(context) }
     val protectionEnabled by prefs.protectionEnabled.collectAsState(initial = false)
+    val accessibilityEnabled by prefs.accessibilityServiceEnabled.collectAsState(initial = false)
     val blockedCount by prefs.getBlockedCount().collectAsState(initial = 0)
     val protectedSeconds by prefs.getProtectedSeconds().collectAsState(initial = 0)
+
+    val protectionActive = protectionEnabled && accessibilityEnabled
 
     Column(
         modifier = Modifier
@@ -38,7 +41,7 @@ fun DashboardScreen() {
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
-                containerColor = if (protectionEnabled)
+                containerColor = if (protectionActive)
                     MaterialTheme.colorScheme.primaryContainer
                 else
                     MaterialTheme.colorScheme.errorContainer
@@ -50,15 +53,15 @@ fun DashboardScreen() {
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Icon(
-                        if (protectionEnabled) Icons.Default.Shield else Icons.Default.Shield,
+                        if (protectionActive) Icons.Default.Shield else Icons.Default.Shield,
                         contentDescription = null,
-                        tint = if (protectionEnabled)
+                        tint = if (protectionActive)
                             MaterialTheme.colorScheme.primary
                         else
                             MaterialTheme.colorScheme.error
                     )
                     Text(
-                        if (protectionEnabled) "Protection Active" else "Protection Inactive",
+                        if (protectionActive) "Protection Active" else "Protection Inactive",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -82,7 +85,7 @@ fun DashboardScreen() {
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                if (!protectionEnabled) {
+                if (!protectionActive) {
                     Button(
                         onClick = {
                             val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)

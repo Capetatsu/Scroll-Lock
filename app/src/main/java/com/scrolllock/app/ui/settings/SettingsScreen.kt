@@ -23,6 +23,7 @@ fun SettingsScreen() {
     val scope = rememberCoroutineScope()
     val prefs = remember { PreferencesManager(context) }
     val protectionEnabled by prefs.protectionEnabled.collectAsState(initial = false)
+    val accessibilityEnabled by prefs.accessibilityServiceEnabled.collectAsState(initial = false)
     val debugMode by prefs.debugMode.collectAsState(initial = false)
 
     Column(
@@ -45,7 +46,7 @@ fun SettingsScreen() {
 
                 SettingItem(
                     title = "Accessibility Service",
-                    subtitle = if (protectionEnabled) "Enabled" else "Disabled",
+                    subtitle = if (accessibilityEnabled) "Enabled" else "Disabled",
                     icon = Icons.Default.Accessibility,
                     onClick = {
                         val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)

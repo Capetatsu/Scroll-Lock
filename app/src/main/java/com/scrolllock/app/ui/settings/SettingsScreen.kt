@@ -24,6 +24,7 @@ fun SettingsScreen() {
     val prefs = remember { PreferencesManager(context) }
     val protectionEnabled by prefs.protectionEnabled.collectAsState(initial = false)
     val accessibilityEnabled by prefs.accessibilityServiceEnabled.collectAsState(initial = false)
+    val accessibilityConnected by prefs.accessibilityServiceConnected.collectAsState(initial = false)
     val debugMode by prefs.debugMode.collectAsState(initial = false)
 
     Column(
@@ -46,7 +47,11 @@ fun SettingsScreen() {
 
                 SettingItem(
                     title = "Accessibility Service",
-                    subtitle = if (accessibilityEnabled) "Enabled" else "Disabled",
+                    subtitle = when {
+                        !accessibilityEnabled -> "Disabled in Android Settings"
+                        !accessibilityConnected -> "Enabled but not connected"
+                        else -> "Enabled & Connected"
+                    },
                     icon = Icons.Default.Accessibility,
                     onClick = {
                         val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)

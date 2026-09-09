@@ -1,6 +1,10 @@
 package com.scrolllock.app.data.preferences
 
 import android.content.Context
+import android.database.ContentObserver
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
@@ -178,7 +182,26 @@ class PreferencesManager(private val context: Context) {
         return enabledServices.split(":").any { it == targetService }
     }
 
-    val accessibilityServiceEnabled: MutableStateFlow<Boolean> = MutableStateFlow(isAccessibilityServiceEnabled())
+    val accessibilityServiceEnabled: MutableStateFlow<Boolean> = MutableStateFlow(false)
+    val accessibilityServiceConnected: MutableStateFlow<Boolean> = MutableStateFlow(false)
+
+    init {
+        // Initialize with current state
+        accessibilityServiceEnabled.value = isAccessibilityServiceEnabled()
+
+        // Register ContentObserver to watch for accessibility service changes
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                val enabled = isAccessibilityServiceEnabled()
+                accessibilityServiceEnabled.value = enabled
+            }
+        }
+        context.contentResolver.registerContentObserver(
+            Settings.Secure.getUriFor(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES),
+            false,
+            observer
+        )
+    }
 
     fun refreshAccessibilityServiceState() {
         accessibilityServiceEnabled.value = isAccessibilityServiceEnabled()

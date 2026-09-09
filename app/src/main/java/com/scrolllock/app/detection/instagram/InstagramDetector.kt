@@ -8,23 +8,42 @@ class InstagramDetector : ContentDetector {
     override val packageNames = setOf("com.instagram.android")
 
     companion object {
+        // Core Reels IDs (from reverse engineering)
         private const val REEL_ITEM_TOOLBAR = "com.instagram.android:id/reel_item_toolbar_container"
         private const val REELS_TRAY = "com.instagram.android:id/reels_tray_container"
         private const val ROOT_CLIPS = "com.instagram.android:id/root_clips_layout"
         private const val CLIPS_AUTHOR = "com.instagram.android:id/clips_author_username"
+        private const val REEL_VIEW_PAGER = "com.instagram.android:id/reels_view_pager"
+
+        // Navigation tab IDs
         private const val DIRECT_TAB = "com.instagram.android:id/direct_tab"
         private const val FEED_TAB = "com.instagram.android:id/feed_tab"
         private const val EXPLORE_ACTION_BAR = "com.instagram.android:id/explore_action_bar"
+        private const val NAVIGATION_TAB_BAR = "com.instagram.android:id/tab_bar"
+
+        // Engagement IDs
         private const val LIKE_COUNT = "com.instagram.android:id/like_count"
-        private const val INBOX_LIST = "com.instagram.android:id/inbox_refreshable_thread_list_recyclerview"
-        private const val DIRECT_THREAD_HEADER = "com.instagram.android:id/direct_thread_header"
-        private const val STORIES_TRAY = "com.instagram.android:id/stories_tray_container"
-        private const val STORY_RING = "com.instagram.android:id/story_ring"
         private const val COMMENT_CONTAINER = "com.instagram.android:id/comment_thread_container"
         private const val COMMENT_INPUT = "com.instagram.android:id/layout_comment_thread_edittext"
-        private const val NAVIGATION_TAB_BAR = "com.instagram.android:id/tab_bar"
-        private const val REEL_VIEW_PAGER = "com.instagram.android:id/reels_view_pager"
+        private const val INBOX_LIST = "com.instagram.android:id/inbox_refreshable_thread_list_recyclerview"
+        private const val DIRECT_THREAD_HEADER = "com.instagram.android:id/direct_thread_header"
 
+        // Stories
+        private const val STORIES_TRAY = "com.instagram.android:id/stories_tray_container"
+        private const val STORY_RING = "com.instagram.android:id/story_ring"
+
+        // Additional Reels indicators (newer Instagram versions)
+        private const val REEL_VIDEO_VIEW = "com.instagram.android:id/reel_video_view"
+        private const val REEL_PROGRESS_BAR = "com.instagram.android:id/reel_progress_bar"
+        private const val CLIPS_METADATA = "com.instagram.android:id/clips_metadata"
+        private const val REEL_SHARE_BUTTON = "com.instagram.android:id/reel_share_button"
+        private const val REEL_CAPTION = "com.instagram.android:id/reel_caption"
+
+        // RecyclerView for Reels feed
+        private const val REELS_RECYCLER_VIEW = "com.instagram.android:id/reels_recycler_view"
+        private const val CLIPS_RECYCLER_VIEW = "com.instagram.android:id/clips_recycler_view"
+
+        // Content descriptions (localized)
         private const val CONTENT_DESC_REELS = "Reels"
         private const val CONTENT_DESC_EXPLORE = "Explore"
         private const val CONTENT_DESC_STORIES = "Stories"
@@ -34,6 +53,8 @@ class InstagramDetector : ContentDetector {
         private const val CONTENT_DESC_SEARCH = "Search"
         private const val CONTENT_DESC_CREATE = "Create"
         private const val CONTENT_DESC_LIKES = "Likes"
+        private const val CONTENT_DESC_SHARE = "Share"
+        private const val CONTENT_DESC_REEL = "Reel"
     }
 
     override fun classify(root: AccessibilityNodeInfo): List<DetectionCandidate> {
@@ -53,27 +74,28 @@ class InstagramDetector : ContentDetector {
         val signals = mutableListOf<DetectionSignal>()
         var confidence = 0.0
 
-        checkIdSignal(root, REEL_ITEM_TOOLBAR, "reel_item_toolbar_container", 0.30)?.let {
-            signals.add(it); confidence += it.confidence
-        }
-        checkIdSignal(root, REELS_TRAY, "reels_tray_container", 0.20)?.let {
-            signals.add(it); confidence += it.confidence
-        }
-        checkIdSignal(root, ROOT_CLIPS, "root_clips_layout", 0.15)?.let {
-            signals.add(it); confidence += it.confidence
-        }
-        checkIdSignal(root, CLIPS_AUTHOR, "clips_author_username", 0.10)?.let {
-            signals.add(it); confidence += it.confidence
-        }
-        checkIdSignal(root, REEL_VIEW_PAGER, "reels_view_pager", 0.10)?.let {
-            signals.add(it); confidence += it.confidence
-        }
-        checkContentDescSignal(root, CONTENT_DESC_REELS, "content_desc_reels", 0.10)?.let {
-            signals.add(it); confidence += it.confidence
-        }
-        checkIdSignal(root, LIKE_COUNT, "like_count_visible", 0.05)?.let {
-            signals.add(it); confidence += it.confidence
-        }
+        // Primary Reels identifiers (high confidence)
+        checkIdSignal(root, REEL_ITEM_TOOLBAR, "reel_item_toolbar_container", 0.35)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, REELS_TRAY, "reels_tray_container", 0.25)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, ROOT_CLIPS, "root_clips_layout", 0.20)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, REEL_VIEW_PAGER, "reels_view_pager", 0.20)?.let { signals.add(it); confidence += it.confidence }
+
+        // Additional Reels signals (medium confidence)
+        checkIdSignal(root, REEL_VIDEO_VIEW, "reel_video_view", 0.15)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, REEL_PROGRESS_BAR, "reel_progress_bar", 0.10)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, CLIPS_METADATA, "clips_metadata", 0.10)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, REEL_SHARE_BUTTON, "reel_share_button", 0.08)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, REEL_CAPTION, "reel_caption", 0.08)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, REELS_RECYCLER_VIEW, "reels_recycler_view", 0.10)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, CLIPS_RECYCLER_VIEW, "clips_recycler_view", 0.10)?.let { signals.add(it); confidence += it.confidence }
+
+        // Author and engagement
+        checkIdSignal(root, CLIPS_AUTHOR, "clips_author_username", 0.08)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, LIKE_COUNT, "like_count_visible", 0.05)?.let { signals.add(it); confidence += it.confidence }
+
+        // Content description
+        checkContentDescSignal(root, CONTENT_DESC_REELS, "content_desc_reels", 0.10)?.let { signals.add(it); confidence += it.confidence }
+        checkContentDescSignal(root, CONTENT_DESC_REEL, "content_desc_reel", 0.08)?.let { signals.add(it); confidence += it.confidence }
 
         if (signals.isEmpty()) return null
 
@@ -85,7 +107,8 @@ class InstagramDetector : ContentDetector {
             bounds = bounds,
             reasonCodes = signals.map { it.description },
             nodeReference = NodeUtils.findNodeById(root, REEL_ITEM_TOOLBAR)
-                ?: NodeUtils.findNodeById(root, ROOT_CLIPS),
+                ?: NodeUtils.findNodeById(root, ROOT_CLIPS)
+                ?: NodeUtils.findNodeById(root, REEL_VIEW_PAGER),
             matchResult = if (confidence >= 0.70) DetectionResult.MATCH else DetectionResult.UNKNOWN,
             signals = signals
         )
@@ -95,15 +118,9 @@ class InstagramDetector : ContentDetector {
         val signals = mutableListOf<DetectionSignal>()
         var confidence = 0.0
 
-        checkIdSignal(root, STORIES_TRAY, "stories_tray_container", 0.35)?.let {
-            signals.add(it); confidence += it.confidence
-        }
-        checkIdSignal(root, STORY_RING, "story_ring", 0.25)?.let {
-            signals.add(it); confidence += it.confidence
-        }
-        checkContentDescSignal(root, CONTENT_DESC_STORIES, "content_desc_stories", 0.20)?.let {
-            signals.add(it); confidence += it.confidence
-        }
+        checkIdSignal(root, STORIES_TRAY, "stories_tray_container", 0.35)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, STORY_RING, "story_ring", 0.25)?.let { signals.add(it); confidence += it.confidence }
+        checkContentDescSignal(root, CONTENT_DESC_STORIES, "content_desc_stories", 0.20)?.let { signals.add(it); confidence += it.confidence }
 
         if (signals.isEmpty()) return null
 
@@ -121,15 +138,9 @@ class InstagramDetector : ContentDetector {
         val signals = mutableListOf<DetectionSignal>()
         var confidence = 0.0
 
-        checkIdSignal(root, EXPLORE_ACTION_BAR, "explore_action_bar", 0.40)?.let {
-            signals.add(it); confidence += it.confidence
-        }
-        checkContentDescSignal(root, CONTENT_DESC_SEARCH, "content_desc_search", 0.20)?.let {
-            signals.add(it); confidence += it.confidence
-        }
-        checkContentDescSignal(root, CONTENT_DESC_EXPLORE, "content_desc_explore", 0.20)?.let {
-            signals.add(it); confidence += it.confidence
-        }
+        checkIdSignal(root, EXPLORE_ACTION_BAR, "explore_action_bar", 0.40)?.let { signals.add(it); confidence += it.confidence }
+        checkContentDescSignal(root, CONTENT_DESC_SEARCH, "content_desc_search", 0.20)?.let { signals.add(it); confidence += it.confidence }
+        checkContentDescSignal(root, CONTENT_DESC_EXPLORE, "content_desc_explore", 0.20)?.let { signals.add(it); confidence += it.confidence }
 
         if (signals.isEmpty()) return null
 
@@ -173,9 +184,7 @@ class InstagramDetector : ContentDetector {
                 confidence += 0.15
             }
         }
-        checkContentDescSignal(root, CONTENT_DESC_HOME, "content_desc_home", 0.15)?.let {
-            signals.add(it); confidence += it.confidence
-        }
+        checkContentDescSignal(root, CONTENT_DESC_HOME, "content_desc_home", 0.15)?.let { signals.add(it); confidence += it.confidence }
 
         if (signals.isEmpty()) return null
 
@@ -194,18 +203,10 @@ class InstagramDetector : ContentDetector {
         val signals = mutableListOf<DetectionSignal>()
         var confidence = 0.0
 
-        checkIdSignal(root, DIRECT_TAB, "direct_tab", 0.30)?.let {
-            signals.add(it); confidence += it.confidence
-        }
-        checkIdSignal(root, INBOX_LIST, "inbox_thread_list", 0.25)?.let {
-            signals.add(it); confidence += it.confidence
-        }
-        checkIdSignal(root, DIRECT_THREAD_HEADER, "direct_thread_header", 0.25)?.let {
-            signals.add(it); confidence += it.confidence
-        }
-        checkContentDescSignal(root, CONTENT_DESC_DIRECT, "content_desc_direct", 0.15)?.let {
-            signals.add(it); confidence += it.confidence
-        }
+        checkIdSignal(root, DIRECT_TAB, "direct_tab", 0.30)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, INBOX_LIST, "inbox_thread_list", 0.25)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, DIRECT_THREAD_HEADER, "direct_thread_header", 0.25)?.let { signals.add(it); confidence += it.confidence }
+        checkContentDescSignal(root, CONTENT_DESC_DIRECT, "content_desc_direct", 0.15)?.let { signals.add(it); confidence += it.confidence }
 
         if (signals.isEmpty()) return null
 
@@ -223,15 +224,9 @@ class InstagramDetector : ContentDetector {
         val signals = mutableListOf<DetectionSignal>()
         var confidence = 0.0
 
-        checkIdSignal(root, COMMENT_CONTAINER, "comment_thread_container", 0.35)?.let {
-            signals.add(it); confidence += it.confidence
-        }
-        checkIdSignal(root, COMMENT_INPUT, "comment_input_visible", 0.25)?.let {
-            signals.add(it); confidence += it.confidence
-        }
-        checkContentDescSignal(root, CONTENT_DESC_COMMENTS, "content_desc_comments", 0.20)?.let {
-            signals.add(it); confidence += it.confidence
-        }
+        checkIdSignal(root, COMMENT_CONTAINER, "comment_thread_container", 0.35)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, COMMENT_INPUT, "comment_input_visible", 0.25)?.let { signals.add(it); confidence += it.confidence }
+        checkContentDescSignal(root, CONTENT_DESC_COMMENTS, "content_desc_comments", 0.20)?.let { signals.add(it); confidence += it.confidence }
 
         if (signals.isEmpty()) return null
 
@@ -330,6 +325,7 @@ class InstagramDetector : ContentDetector {
     private fun findReelsBounds(root: AccessibilityNodeInfo): Rect? {
         val node = NodeUtils.findNodeById(root, REEL_ITEM_TOOLBAR)
             ?: NodeUtils.findNodeById(root, ROOT_CLIPS)
+            ?: NodeUtils.findNodeById(root, REEL_VIEW_PAGER)
         return NodeUtils.getBounds(node)
     }
 }

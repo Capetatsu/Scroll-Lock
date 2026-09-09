@@ -20,6 +20,7 @@ import com.scrolllock.app.data.room.ScrollLockDatabase
 import com.scrolllock.app.detection.*
 import com.scrolllock.app.detection.DebugEventBus
 import com.scrolllock.app.detection.DebugStateHolder
+import com.scrolllock.app.detection.PipelineTracker
 import com.scrolllock.app.detection.instagram.InstagramDetector
 import com.scrolllock.app.detection.youtube.YouTubeDetector
 import com.scrolllock.app.detection.tiktok.TikTokDetector
@@ -105,6 +106,13 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         registerDetectors()
         refreshCachedPrefs()
 
+        // Update service connected state
+        prefs.accessibilityServiceConnected.value = true
+        prefs.accessibilityServiceEnabled.value = true
+
+        // Initialize pipeline tracker
+        PipelineTracker.getInstance(applicationContext)
+
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, createNotification())
 
@@ -137,6 +145,12 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         if (event == null) return
         val packageName = event.packageName?.toString() ?: return
         if (packageName == this.packageName) return
+
+        PipelineTracker.getInstance(applicationContext).logEvent(
+            stage = PipelineStage.EVENT_RECEIVED,
+            packageName = packageName,
+            eventType = event.eventType.toString()
+        )
 
         if (!cachedProtectionEnabled) {
             mainHandler.post { overlayController?.hide() }
@@ -265,20 +279,64 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         rootNode: AccessibilityNodeInfo,
         featureMask: Int
     ) {
+        PipelineTracker.getInstance(applicationContext).logEvent(
+            stage = PipelineStage.PACKAGE_DETECTED,
+            packageName = packageName
+        )
+
         val candidates = DetectorEngine.detect(packageName, rootNode, 0)
         val topCandidate = candidates.maxByOrNull { it.confidence } ?: return
 
-        if (topCandidate.confidence < 0.70) return
+        PipelineTracker.getInstance(applicationContext).logEvent(
+            stage = PipelineStage.DETECTOR_RUNNING,
+            packageName = packageName,
+            surface = topCandidate.surface,
+            confidence = topCandidate.confidence,
+            matchResult = topCandidate.matchResult,
+            matchedIds = topCandidate.signals.filter { it.type == SignalType.RESOURCE_ID }.map { it.identifier },
+            matchedContentDescriptions = topCandidate.signals.filter { it.type == SignalType.CONTENT_DESCRIPTION }.map { it.identifier }
+        )
+
+        if (topCandidate.confidence < 0.70) {
+            PipelineTracker.getInstance(applicationContext).logEvent(
+                stage = PipelineStage.SURFACE_CLASSIFIED,
+                packageName = packageName,
+                surface = topCandidate.surface,
+                confidence = topCandidate.confidence,
+                matchResult = topCandidate.matchResult,
+                errorMessage = "Confidence below threshold (0.70)"
+            )
+            return
+        }
 
         val appInfo = try {
             db?.appInfoDao()?.getByPackage(packageName)
         } catch (e: Exception) { null }
         val appEnabled = appInfo?.enabled ?: false
 
-        if (!appEnabled) return
+        if (!appEnabled) {
+            PipelineTracker.getInstance(applicationContext).logEvent(
+                stage = PipelineStage.FEATURE_MAPPED,
+                packageName = packageName,
+                surface = topCandidate.surface,
+                confidence = topCandidate.confidence,
+                matchResult = topCandidate.matchResult,
+                errorMessage = "App not enabled in ScrollLock"
+            )
+            return
+        }
 
         // Map detected surface to feature mask for schedule check
         val detectedFeature = surfaceToFeatureMask(topCandidate.surface)
+
+        PipelineTracker.getInstance(applicationContext).logEvent(
+            stage = PipelineStage.FEATURE_MAPPED,
+            packageName = packageName,
+            surface = topCandidate.surface,
+            confidence = topCandidate.confidence,
+            matchResult = topCandidate.matchResult,
+            extraData = mapOf("detectedFeature" to detectedFeature.toString())
+        )
 
         val scheduleActive = if (cachedSchedulesEnabled) {
             try {
@@ -315,6 +373,21 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         )
 
         val decision = PolicyEngine.evaluate(context)
+
+        PipelineTracker.getInstance(applicationContext).logEvent(
+            stage = PipelineStage.POLICY_EVALUATED,
+            packageName = packageName,
+            surface = topCandidate.surface,
+            confidence = topCandidate.confidence,
+            matchResult = topCandidate.matchResult,
+            policyAction = decision.action.name,
+            policyReason = decision.reason,
+            extraData = mapOf(
+                "scheduleActive" to scheduleActive.toString(),
+                "cooldownActive" to cooldownCurrentlyActive.toString(),
+                "appEnabled" to appEnabled.toString()
+            )
+        )
 
         if (prefs?.isDebugModeBlocking() == true) {
             DebugEventBus.postEvent(DetectionDebugInfo(
@@ -356,6 +429,32 @@ class ScrollLockAccessibilityService : AccessibilityService() {
             ))
         }
 
+        if (decision.action == PolicyDecision.Action.BLOCK) {
+            PipelineTracker.getInstance(applicationContext).logEvent(
+                stage = PipelineStage.BLOCK_DECIDED,
+                packageName = packageName,
+                surface = topCandidate.surface,
+                confidence = topCandidate.confidence,
+                matchResult = topCandidate.matchResult,
+                policyAction = decision.action.name,
+                policyReason = decision.reason,
+                blockAction = "SHOW_OVERLAY",
+                blockReason = decision.reason
+            )
+        } else if (decision.action == PolicyDecision.Action.REDIRECT) {
+            PipelineTracker.getInstance(applicationContext).logEvent(
+                stage = PipelineStage.BLOCK_DECIDED,
+                packageName = packageName,
+                surface = topCandidate.surface,
+                confidence = topCandidate.confidence,
+                matchResult = topCandidate.matchResult,
+                policyAction = decision.action.name,
+                policyReason = decision.reason,
+                blockAction = "REDIRECT_TO_DM",
+                blockReason = decision.reason
+            )
+        }
+
         executeDecision(decision, packageName, topCandidate)
     }
 
@@ -391,12 +490,43 @@ class ScrollLockAccessibilityService : AccessibilityService() {
                     DetectionSurface.COMMENTS -> "Comments Blocked"
                     else -> "Content Blocked"
                 }
+
+                PipelineTracker.getInstance(applicationContext).logEvent(
+                    stage = PipelineStage.ENFORCEMENT_ATTEMPTED,
+                    packageName = packageName,
+                    surface = candidate.surface,
+                    blockAction = "SHOW_OVERLAY",
+                    blockReason = decision.reason
+                )
+
                 showBlockOverlay(packageName, title, decision.reason)
                 scope.launch { prefs?.incrementBlockedCount() }
+
+                PipelineTracker.getInstance(applicationContext).logEvent(
+                    stage = PipelineStage.ENFORCEMENT_SUCCESS,
+                    packageName = packageName,
+                    surface = candidate.surface,
+                    blockAction = "SHOW_OVERLAY",
+                    blockReason = decision.reason
+                )
             }
             PolicyDecision.Action.REDIRECT -> {
                 if (decision.redirectTarget == "direct" && packageName == "com.instagram.android") {
+                    PipelineTracker.getInstance(applicationContext).logEvent(
+                        stage = PipelineStage.ENFORCEMENT_ATTEMPTED,
+                        packageName = packageName,
+                        surface = candidate.surface,
+                        blockAction = "REDIRECT_TO_DM",
+                        blockReason = decision.reason
+                    )
                     performInstagramRedirect()
+                    PipelineTracker.getInstance(applicationContext).logEvent(
+                        stage = PipelineStage.ENFORCEMENT_SUCCESS,
+                        packageName = packageName,
+                        surface = candidate.surface,
+                        blockAction = "REDIRECT_TO_DM",
+                        blockReason = decision.reason
+                    )
                 }
             }
             PolicyDecision.Action.ALLOW -> {
@@ -497,12 +627,14 @@ class ScrollLockAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         Log.i(TAG, "Accessibility service interrupted")
+        prefs?.accessibilityServiceConnected?.value = false
         overlayController?.cleanup()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         Log.i(TAG, "Accessibility service destroyed")
+        prefs?.accessibilityServiceConnected?.value = false
         scope.cancel()
         mainHandler.removeCallbacksAndMessages(null)
         overlayController?.cleanup()

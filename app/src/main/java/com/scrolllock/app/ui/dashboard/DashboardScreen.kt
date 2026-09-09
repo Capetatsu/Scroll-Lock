@@ -21,10 +21,11 @@ fun DashboardScreen() {
     val prefs = remember { PreferencesManager(context) }
     val protectionEnabled by prefs.protectionEnabled.collectAsState(initial = false)
     val accessibilityEnabled by prefs.accessibilityServiceEnabled.collectAsState(initial = false)
+    val accessibilityConnected by prefs.accessibilityServiceConnected.collectAsState(initial = false)
     val blockedCount by prefs.getBlockedCount().collectAsState(initial = 0)
     val protectedSeconds by prefs.getProtectedSeconds().collectAsState(initial = 0)
 
-    val protectionActive = protectionEnabled && accessibilityEnabled
+    val protectionActive = protectionEnabled && accessibilityEnabled && accessibilityConnected
 
     Column(
         modifier = Modifier

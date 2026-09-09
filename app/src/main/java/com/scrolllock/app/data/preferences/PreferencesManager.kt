@@ -153,6 +153,11 @@ class PreferencesManager(private val context: Context) {
         context.dataStore.data.first()[COOLDOWN_START] ?: 0L
     }
 
+    fun getCooldownExtraAppsBlocking(): Set<String> = runBlocking {
+        val extra = context.dataStore.data.first()[COOLDOWN_EXTRA_APPS] ?: ""
+        extra.split(",").filter { it.isNotEmpty() }.toSet()
+    }
+
     fun setDebugMode(enabled: Boolean) {
         runBlocking {
             context.dataStore.edit { it[DEBUG_MODE] = enabled }

@@ -20,16 +20,11 @@ fun DebugScreen() {
     val prefs = remember { PreferencesManager(context) }
     val debugMode by prefs.debugMode.collectAsState(initial = false)
 
-    var latestEvent by remember { mutableStateOf<DetectionDebugInfo?>(null) }
-    var eventCount by remember { mutableIntStateOf(0) }
+    var debugState by remember { mutableStateOf(DebugState()) }
 
     LaunchedEffect(debugMode) {
         while (debugMode) {
-            val event = DebugEventBus.getLatestEvent()
-            if (event != latestEvent) {
-                latestEvent = event
-                eventCount = DebugEventBus.getRecentEvents().size
-            }
+            debugState = DebugStateHolder.get()
             delay(200)
         }
     }
@@ -64,35 +59,56 @@ fun DebugScreen() {
                     Text("Live Detector Feed", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    if (latestEvent != null) {
-                        val event = latestEvent!!
-                        InfoRow("Package", event.packageName)
-                        InfoRow("Surface", event.surface.name)
-                        InfoRow("Confidence", String.format("%.2f", event.confidence))
-                        InfoRow("Result", event.matchResult.name)
-                        InfoRow("Events Cached", eventCount.toString())
+                    InfoRow("Package", debugState.packageName)
+                    InfoRow("Event Type", debugState.eventType)
+                    InfoRow("Surface", debugState.surface.name)
+                    InfoRow("Confidence", String.format("%.2f", debugState.confidence))
+                    InfoRow("Result", debugState.matchResult.name)
+                    InfoRow("Policy Decision", debugState.policyDecision)
+                    InfoRow("Policy Reason", debugState.policyReason)
 
-                        if (event.reasonCodes.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("Reason Codes:", fontWeight = FontWeight.Medium)
-                            event.reasonCodes.forEach { code ->
-                                Text("  $code", style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
+                    if (debugState.bounds != null) {
+                        val b = debugState.bounds!!
+                        InfoRow("Bounds", "[${b.left},${b.top}][${b.right},${b.bottom}] (${b.width()}x${b.height()})")
+                    }
 
-                        if (event.signals.isNotEmpty()) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("Detection Signals:", fontWeight = FontWeight.Medium)
-                            event.signals.forEach { signal ->
-                                SignalRow(signal)
-                            }
+                    // Cooldown Status
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Cooldown", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    InfoRow("Active", if (debugState.cooldownActive) "YES" else "NO")
+                    InfoRow("Source App", debugState.cooldownSourceApp ?: "none")
+                    if (debugState.cooldownExpiry > 0) {
+                        val remaining = (debugState.cooldownExpiry - System.currentTimeMillis()) / 1000
+                        InfoRow("Expires In", "${remaining}s")
+                    }
+
+                    // AntiScroll State
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Anti-Scroll", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    InfoRow("Session Duration", "${debugState.antiScrollSessionDuration / 1000}s")
+                    InfoRow("Swipe Count (Window)", debugState.antiScrollSwipeCount.toString())
+                    InfoRow("Direction Changes", debugState.antiScrollDirectionChanges.toString())
+                    InfoRow("Blocked", if (debugState.antiScrollBlocked) "YES" else "NO")
+                    if (debugState.antiScrollBlockedUntil > 0) {
+                        val remaining = (debugState.antiScrollBlockedUntil - System.currentTimeMillis()) / 1000
+                        InfoRow("Block Expires In", "${remaining}s")
+                    }
+
+                    // Detection Signals
+                    if (debugState.matchedIds.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Matched Resource IDs:", fontWeight = FontWeight.Medium)
+                        debugState.matchedIds.forEach { id ->
+                            Text("  $id", style = MaterialTheme.typography.bodySmall)
                         }
-                    } else {
-                        Text(
-                            "No detection events yet. Navigate to a monitored app.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    }
+
+                    if (debugState.matchedContentDescriptions.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Matched Content Descriptions:", fontWeight = FontWeight.Medium)
+                        debugState.matchedContentDescriptions.forEach { desc ->
+                            Text("  $desc", style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
             }
@@ -146,43 +162,6 @@ fun DebugScreen() {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("Note: Detection relies on accessibility tree fingerprints that may change with app updates.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            }
-        }
-    }
-}
-
-@Composable
-fun SignalRow(signal: DetectionSignal) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(
-            signal.description,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.weight(1f)
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                "conf=${String.format("%.2f", signal.confidence)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary
-            )
-            if (signal.isSelected) {
-                Text(
-                    "selected",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.tertiary
-                )
-            }
-            if (signal.isVisible) {
-                Text(
-                    "visible",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.tertiary
-                )
             }
         }
     }

@@ -5,6 +5,10 @@ import com.scrolllock.app.data.model.Swipe
 import com.scrolllock.app.data.room.dao.SwipeDao
 import com.scrolllock.app.data.room.dao.AntiScrollDao
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class AntiScrollEngine(
     private val swipeDao: SwipeDao,
@@ -17,9 +21,12 @@ class AntiScrollEngine(
         durationThreshold = 180
     )
 
+    private val persistJob = SupervisorJob()
+    private val persistScope = CoroutineScope(persistJob + Dispatchers.IO)
+
     private val recentSwipes = ConcurrentHashMap<String, MutableList<Swipe>>()
     private val lastScrollY = ConcurrentHashMap<String, Int>()
-    private val lastScrollTime = ConcurrentHashMap<String, Long>()
+    private val lastEventTime = ConcurrentHashMap<String, Long>()
     private val blockedUntil = ConcurrentHashMap<String, Long>()
 
     private val sessionStart = ConcurrentHashMap<String, Long>()
@@ -33,7 +40,6 @@ class AntiScrollEngine(
         private const val NOISE_WINDOW_MS = 40L
         private const val SESSION_TIMEOUT_MS = 3000L
         private const val BLOCK_DURATION_MS = 60_000L
-        private const val DIRECTION_CHANGE_PENALTY = 0.15
     }
 
     fun analyzeScrollEvent(
@@ -48,8 +54,8 @@ class AntiScrollEngine(
             return ScrollAnalysis.Blocked
         }
 
-        val prevTime = lastScrollTime[packageName] ?: 0L
-        val timeDelta = now - prevTime
+        val prevTime = lastEventTime[packageName] ?: 0L
+        val timeDelta = eventTime - prevTime
 
         if (timeDelta < DEBOUNCE_MS) {
             return ScrollAnalysis.Debounced(timeDelta)
@@ -58,30 +64,34 @@ class AntiScrollEngine(
         val prevScrollY = lastScrollY[packageName]
         if (prevScrollY == null) {
             lastScrollY[packageName] = scrollY
-            lastScrollTime[packageName] = now
-            updateSession(packageName, 0, now)
+            lastEventTime[packageName] = eventTime
+            updateSession(packageName, 0, eventTime)
             return ScrollAnalysis.Initial
         }
 
         val delta = scrollY - prevScrollY
 
         lastScrollY[packageName] = scrollY
-        lastScrollTime[packageName] = now
+        lastEventTime[packageName] = eventTime
 
         if (kotlin.math.abs(delta) < MIN_DELTA_THRESHOLD) {
             return ScrollAnalysis.NoiseFiltered(delta, MIN_DELTA_THRESHOLD)
         }
 
         val direction = if (delta > 0) 1 else -1
-        val sessionAnalysis = updateSession(packageName, direction, now)
+        val sessionAnalysis = updateSession(packageName, direction, eventTime)
 
         val swipe = Swipe(
             packageName = packageName,
-            timestamp = now,
-            swipeDirection = direction
+            timestamp = eventTime,
+            swipeDirection = direction,
+            scrollDeltaY = delta,
+            fromIndex = 0,
+            toIndex = 0
         )
 
         recentSwipes.getOrPut(packageName) { mutableListOf() }.add(swipe)
+        scopePersistSwipe(swipe)
         cleanupOldSwipes(packageName, now)
 
         return ScrollAnalysis.Recorded(
@@ -94,27 +104,38 @@ class AntiScrollEngine(
         )
     }
 
-    private fun updateSession(packageName: String, direction: Int, now: Long): SessionState {
+    private fun scopePersistSwipe(swipe: Swipe) {
+        // Fire-and-forget persistence to avoid blocking event processing
+        persistScope.launch {
+            try {
+                swipeDao.insert(swipe)
+            } catch (e: Exception) {
+                // Persistence failed, in-memory state remains
+            }
+        }
+    }
+
+    private fun updateSession(packageName: String, direction: Int, eventTime: Long): SessionState {
         val start = sessionStart[packageName]
         val lastActivity = sessionLastActivity[packageName]
         val directionChanges = sessionDirectionChanges[packageName] ?: 0
         val lastDir = sessionLastDirection[packageName] ?: 0
 
-        if (start == null || lastActivity == null || (now - lastActivity) > SESSION_TIMEOUT_MS) {
-            sessionStart[packageName] = now
-            sessionLastActivity[packageName] = now
+        if (start == null || lastActivity == null || (eventTime - lastActivity) > SESSION_TIMEOUT_MS) {
+            sessionStart[packageName] = eventTime
+            sessionLastActivity[packageName] = eventTime
             sessionDirectionChanges[packageName] = 0
             sessionLastDirection[packageName] = direction
-            return SessionState(now - now, 0, 1)
+            return SessionState(0L, 0, 1)
         }
 
-        val duration = now - start
+        val duration = eventTime - start
         var newDirectionChanges = directionChanges
         if (direction != 0 && lastDir != 0 && direction != lastDir) {
             newDirectionChanges++
         }
 
-        sessionLastActivity[packageName] = now
+        sessionLastActivity[packageName] = eventTime
         sessionDirectionChanges[packageName] = newDirectionChanges
         sessionLastDirection[packageName] = direction
 
@@ -133,18 +154,21 @@ class AntiScrollEngine(
         } catch (e: Exception) {
             defaultMode
         }
-        val windowStart = now - mode.checkWindow * 1000L
 
-        val swipes = getRecentSwipesInWindow(packageName, windowStart)
-        if (swipes.isEmpty()) return BlockDecision.Allowed("no_swipes_in_window")
+        val sessionDuration = sessionStart[packageName]?.let { now - it } ?: 0L
+        if (sessionDuration == 0L) return BlockDecision.Allowed("no_active_session")
 
-        val sessionDuration = calculateSessionDuration(swipes)
-        val swipeCount = swipes.size
+        val sessionEnd = sessionLastActivity[packageName] ?: now
+        val sessionWindowStart = sessionEnd - mode.checkWindow * 1000L
+
+        val sessionSwipes = recentSwipes[packageName]?.filter { it.timestamp >= sessionWindowStart } ?: emptyList()
+        if (sessionSwipes.isEmpty()) return BlockDecision.Allowed("no_swipes_in_session_window")
+
+        val swipeCount = sessionSwipes.size
+        val directionChanges = sessionDirectionChanges[packageName] ?: 0
 
         val frequencyMet = swipeCount >= mode.swipesFrequency
         val durationMet = sessionDuration >= mode.durationThreshold * 1000L
-
-        val directionChanges = sessionDirectionChanges[packageName] ?: 0
         val hasHighDirectionChanges = directionChanges > 3
 
         if (mode.durationThreshold <= 0) {
@@ -173,17 +197,6 @@ class AntiScrollEngine(
         return false
     }
 
-    private fun getRecentSwipesInWindow(packageName: String, windowStart: Long): List<Swipe> {
-        val memSwipes = recentSwipes[packageName] ?: return emptyList()
-        return memSwipes.filter { it.timestamp >= windowStart }
-    }
-
-    private fun calculateSessionDuration(swipes: List<Swipe>): Long {
-        if (swipes.size < 2) return 0
-        val sorted = swipes.sortedBy { it.timestamp }
-        return sorted.last().timestamp - sorted.first().timestamp
-    }
-
     private fun cleanupOldSwipes(packageName: String, now: Long) {
         val swipes = recentSwipes[packageName] ?: return
         val cutoff = now - 120_000L
@@ -193,7 +206,7 @@ class AntiScrollEngine(
     fun cleanupPackage(packageName: String) {
         recentSwipes.remove(packageName)
         lastScrollY.remove(packageName)
-        lastScrollTime.remove(packageName)
+        lastEventTime.remove(packageName)
         blockedUntil.remove(packageName)
         sessionStart.remove(packageName)
         sessionLastActivity.remove(packageName)
@@ -204,9 +217,10 @@ class AntiScrollEngine(
     suspend fun cleanupAll() {
         val cutoff = System.currentTimeMillis() - 300_000L
         swipeDao.deleteOlderThan(cutoff)
+        persistJob.cancel()
         recentSwipes.clear()
         lastScrollY.clear()
-        lastScrollTime.clear()
+        lastEventTime.clear()
         blockedUntil.clear()
         sessionStart.clear()
         sessionLastActivity.clear()

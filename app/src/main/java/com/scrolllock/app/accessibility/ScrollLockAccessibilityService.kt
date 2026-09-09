@@ -19,6 +19,7 @@ import com.scrolllock.app.data.preferences.PreferencesManager
 import com.scrolllock.app.data.room.ScrollLockDatabase
 import com.scrolllock.app.detection.*
 import com.scrolllock.app.detection.DebugEventBus
+import com.scrolllock.app.detection.DebugStateHolder
 import com.scrolllock.app.detection.instagram.InstagramDetector
 import com.scrolllock.app.detection.youtube.YouTubeDetector
 import com.scrolllock.app.detection.tiktok.TikTokDetector
@@ -195,6 +196,40 @@ class ScrollLockAccessibilityService : AccessibilityService() {
                 eventTime = eventTime
             )
 
+            val antiScrollInfo = antiScrollEngine?.getDebugInfo(packageName)
+            val decisionAction = when (analysis) {
+                is ScrollAnalysis.Recorded -> "RECORDED"
+                is ScrollAnalysis.Blocked -> "BLOCKED_COOLDOWN"
+                is ScrollAnalysis.Debounced -> "DEBOUNCED"
+                is ScrollAnalysis.NoiseFiltered -> "NOISE_FILTERED"
+                is ScrollAnalysis.Initial -> "INITIAL"
+                else -> "UNKNOWN"
+            }
+
+            if (prefs?.isDebugModeBlocking() == true) {
+                DebugStateHolder.update(DebugState(
+                    packageName = packageName,
+                    eventType = "SCROLL",
+                    surface = DetectionSurface.UNKNOWN,
+                    confidence = 0.0,
+                    matchResult = DetectionResult.UNKNOWN,
+                    matchedIds = emptyList(),
+                    matchedContentDescriptions = emptyList(),
+                    bounds = null,
+                    policyDecision = decisionAction,
+                    policyReason = analysis?.toString() ?: "unknown",
+                    cooldownActive = cooldownActive &&
+                            CooldownEngine.isSourceOrExtraApp(cooldownSourceApp, packageName, cooldownExtraApps),
+                    cooldownSourceApp = cooldownSourceApp,
+                    cooldownExpiry = cooldownExpiry,
+                    antiScrollSessionDuration = antiScrollInfo?.sessionDuration ?: 0L,
+                    antiScrollSwipeCount = antiScrollInfo?.recentWindowCount ?: 0,
+                    antiScrollDirectionChanges = antiScrollInfo?.directionChanges ?: 0,
+                    antiScrollBlocked = antiScrollInfo?.isBlocked ?: false,
+                    antiScrollBlockedUntil = antiScrollInfo?.blockedUntil ?: 0L
+                ))
+            }
+
             when (analysis) {
                 is ScrollAnalysis.Recorded -> {
                     val blockDecision = antiScrollEngine?.shouldBlock(packageName)
@@ -238,10 +273,13 @@ class ScrollLockAccessibilityService : AccessibilityService() {
 
         if (!appEnabled) return
 
+        // Map detected surface to feature mask for schedule check
+        val detectedFeature = surfaceToFeatureMask(topCandidate.surface)
+
         val scheduleActive = if (cachedSchedulesEnabled) {
             try {
                 val rules = db?.scheduleRuleDao()?.getEnabled() ?: emptyList()
-                ScheduleEngine.isScheduleActive(rules, packageName, featureMask)
+                ScheduleEngine.isScheduleActive(rules, packageName, detectedFeature)
             } catch (e: Exception) { true }
         } else true
 
@@ -267,7 +305,7 @@ class ScrollLockAccessibilityService : AccessibilityService() {
             cooldownActive = cooldownCurrentlyActive,
             blockingSessionActive = false,
             confidence = topCandidate.confidence,
-            detectedFeature = featureMask,
+            detectedFeature = detectedFeature,
             surfaceName = topCandidate.surface.name,
             instagramSettings = igSettings
         )
@@ -283,9 +321,54 @@ class ScrollLockAccessibilityService : AccessibilityService() {
                 signals = topCandidate.signals,
                 reasonCodes = topCandidate.reasonCodes
             ))
+
+            val matchedIds = topCandidate.signals
+                .filter { it.type == SignalType.RESOURCE_ID }
+                .map { it.identifier }
+            val matchedDescs = topCandidate.signals
+                .filter { it.type == SignalType.CONTENT_DESCRIPTION }
+                .map { it.identifier }
+
+            val antiScrollInfo = antiScrollEngine?.getDebugInfo(packageName)
+            DebugStateHolder.update(DebugState(
+                packageName = packageName,
+                eventType = "DETECTION",
+                surface = topCandidate.surface,
+                confidence = topCandidate.confidence,
+                matchResult = topCandidate.matchResult,
+                matchedIds = matchedIds,
+                matchedContentDescriptions = matchedDescs,
+                bounds = topCandidate.bounds,
+                policyDecision = decision.action.name,
+                policyReason = decision.reason,
+                cooldownActive = cooldownCurrentlyActive,
+                cooldownSourceApp = cooldownSourceApp,
+                cooldownExpiry = cooldownExpiry,
+                antiScrollSessionDuration = antiScrollInfo?.sessionDuration ?: 0L,
+                antiScrollSwipeCount = antiScrollInfo?.recentWindowCount ?: 0,
+                antiScrollDirectionChanges = antiScrollInfo?.directionChanges ?: 0,
+                antiScrollBlocked = antiScrollInfo?.isBlocked ?: false,
+                antiScrollBlockedUntil = antiScrollInfo?.blockedUntil ?: 0L
+            ))
         }
 
         executeDecision(decision, packageName, topCandidate)
+    }
+
+    private fun surfaceToFeatureMask(surface: DetectionSurface): Int {
+        return when (surface) {
+            DetectionSurface.REELS,
+            DetectionSurface.SHORTS,
+            DetectionSurface.TIKTOK_VIDEO,
+            DetectionSurface.VIDEO_FEED,
+            DetectionSurface.STORIES,
+            DetectionSurface.EXPLORE,
+            DetectionSurface.COMMENTS,
+            DetectionSurface.MAIN_FEED,
+            DetectionSurface.DM -> FeatureMask.ANTI_REELS
+            DetectionSurface.BROWSER_URL -> FeatureMask.BROWSER_BLOCKING
+            else -> FeatureMask.ANTI_SCROLL
+        }
     }
 
     private fun executeDecision(
@@ -375,8 +458,16 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         cooldownSourceApp = sourceApp.ifEmpty { null }
         cooldownStart = start
         cooldownDuration = duration
-        cooldownActive = CooldownEngine.isCooldownActive(sourceApp, start, duration, "", emptySet())
-        cooldownExpiry = if (start > 0) start + duration * 60_000L else 0L
+
+        val now = System.currentTimeMillis()
+        val expiry = if (start > 0) start + duration * 60_000L else 0L
+        cooldownExpiry = expiry
+
+        // Check if cooldown window is globally active (time-based only)
+        cooldownActive = start > 0 && now < expiry
+
+        // Fetch extra apps for per-event checks
+        cooldownExtraApps = p.getCooldownExtraAppsBlocking()
     }
 
     private fun createNotificationChannel() {

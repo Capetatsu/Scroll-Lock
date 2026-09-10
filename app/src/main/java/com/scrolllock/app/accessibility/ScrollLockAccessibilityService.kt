@@ -40,7 +40,8 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         private const val NOTIFICATION_ID = 1
         private const val SCROLL_THROTTLE_MS = 60L
         private const val WINDOW_THROTTLE_MS = 200L
-        private const val PREFS_REFRESH_INTERVAL_MS = 5000L
+        private const val CONTENT_CHANGE_THROTTLE_MS = 100L
+        private const val CLICK_THROTTLE_MS = 150L
         private const val OVERLAY_DISMISS_MS = 3000L
         private const val COOLDOWN_CHECK_INTERVAL_MS = 5000L
     }
@@ -57,6 +58,8 @@ class ScrollLockAccessibilityService : AccessibilityService() {
 
     private var lastScrollEventTime = 0L
     private var lastWindowEventTime = 0L
+    private var lastContentChangeEventTime = 0L
+    private var lastClickEventTime = 0L
     private var lastPackageName: String? = null
 
     private var cachedProtectionEnabled = false
@@ -104,7 +107,6 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         antiScrollEngine = AntiScrollEngine(db!!.swipeDao(), db!!.antiScrollDao())
 
         registerDetectors()
-        refreshCachedPrefs()
 
         // Update service connected state
         prefs.accessibilityServiceConnected.value = true
@@ -116,7 +118,9 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, createNotification())
 
-        startPrefsRefreshLoop()
+        // Start live preference flow collection (replaces 5-second polling)
+        startPreferenceFlowCollection()
+
         startCooldownCheckLoop()
     }
 
@@ -131,14 +135,27 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         DetectorEngine.registerDetector(BrowserDetector())
     }
 
-    private fun refreshCachedPrefs() {
+    private fun startPreferenceFlowCollection() {
         val p = prefs ?: return
-        cachedProtectionEnabled = p.isProtectionEnabledBlocking()
-        cachedAntiScrollEnabled = p.isAntiScrollEnabledBlocking()
-        cachedAntiReelsEnabled = p.isAntiReelsEnabledBlocking()
-        cachedBrowserBlockEnabled = p.isBrowserBlockEnabledBlocking()
-        cachedCooldownEnabled = p.isCooldownEnabledBlocking()
-        cachedSchedulesEnabled = p.isSchedulesEnabledBlocking()
+
+        scope.launch {
+            p.protectionEnabled.collect { cachedProtectionEnabled = it }
+        }
+        scope.launch {
+            p.antiScrollEnabled.collect { cachedAntiScrollEnabled = it }
+        }
+        scope.launch {
+            p.antiReelsEnabled.collect { cachedAntiReelsEnabled = it }
+        }
+        scope.launch {
+            p.browserBlockEnabled.collect { cachedBrowserBlockEnabled = it }
+        }
+        scope.launch {
+            p.schedulesEnabled.collect { cachedSchedulesEnabled = it }
+        }
+        scope.launch {
+            p.cooldownEnabled.collect { cachedCooldownEnabled = it }
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -173,6 +190,23 @@ class ScrollLockAccessibilityService : AccessibilityService() {
                 DetectorEngine.forceInvalidate()
                 routeWindowEvent(event, packageName)
             }
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                if (now - lastContentChangeEventTime < CONTENT_CHANGE_THROTTLE_MS) return
+                lastContentChangeEventTime = now
+                lastPackageName = packageName
+                DetectorEngine.forceInvalidate()
+                routeContentChangeEvent(event, packageName)
+            }
+            AccessibilityEvent.TYPE_VIEW_CLICKED -> {
+                if (now - lastClickEventTime < CLICK_THROTTLE_MS) return
+                lastClickEventTime = now
+                lastPackageName = packageName
+                routeClickEvent(event, packageName)
+            }
+            AccessibilityEvent.TYPE_VIEW_FOCUSED -> {
+                lastPackageName = packageName
+                routeFocusEvent(event, packageName)
+            }
         }
     }
 
@@ -183,7 +217,7 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         if (cachedAntiReelsEnabled) {
             val rootNode = rootInActiveWindow ?: return
             scope.launch {
-                evaluateDetection(packageName, rootNode, FeatureMask.ANTI_REELS)
+                evaluateDetection(packageName, rootNode, FeatureMask.ANTI_REELS, event.eventType)
             }
         }
     }
@@ -198,7 +232,34 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         if (cachedAntiReelsEnabled) {
             val rootNode = rootInActiveWindow ?: return
             scope.launch {
-                evaluateDetection(packageName, rootNode, FeatureMask.ANTI_REELS)
+                evaluateDetection(packageName, rootNode, FeatureMask.ANTI_REELS, event.eventType)
+            }
+        }
+    }
+
+    private fun routeContentChangeEvent(event: AccessibilityEvent, packageName: String) {
+        if (cachedAntiReelsEnabled) {
+            val rootNode = rootInActiveWindow ?: return
+            scope.launch {
+                evaluateDetection(packageName, rootNode, FeatureMask.ANTI_REELS, event.eventType)
+            }
+        }
+    }
+
+    private fun routeClickEvent(event: AccessibilityEvent, packageName: String) {
+        if (cachedAntiReelsEnabled) {
+            val rootNode = rootInActiveWindow ?: return
+            scope.launch {
+                evaluateDetection(packageName, rootNode, FeatureMask.ANTI_REELS, event.eventType)
+            }
+        }
+    }
+
+    private fun routeFocusEvent(event: AccessibilityEvent, packageName: String) {
+        if (cachedAntiReelsEnabled) {
+            val rootNode = rootInActiveWindow ?: return
+            scope.launch {
+                evaluateDetection(packageName, rootNode, FeatureMask.ANTI_REELS, event.eventType)
             }
         }
     }
@@ -277,14 +338,16 @@ class ScrollLockAccessibilityService : AccessibilityService() {
     private suspend fun evaluateDetection(
         packageName: String,
         rootNode: AccessibilityNodeInfo,
-        featureMask: Int
+        featureMask: Int,
+        eventType: Int
     ) {
         PipelineTracker.getInstance(applicationContext).logEvent(
             stage = PipelineStage.PACKAGE_DETECTED,
             packageName = packageName
         )
 
-        val candidates = DetectorEngine.detect(packageName, rootNode, 0)
+        // Pass the actual event type to DetectorEngine for proper cache invalidation
+        val candidates = DetectorEngine.detect(packageName, rootNode, eventType)
         val topCandidate = candidates.maxByOrNull { it.confidence } ?: return
 
         PipelineTracker.getInstance(applicationContext).logEvent(
@@ -348,13 +411,36 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         val cooldownCurrentlyActive = cooldownActive &&
                 CooldownEngine.isSourceOrExtraApp(cooldownSourceApp, packageName, cooldownExtraApps)
 
+        // FIX: Provide default Instagram settings if JSON is missing/malformed
         val igSettings = if (packageName == "com.instagram.android") {
             try {
                 val json = appInfo?.antiReelsSettingsJSON
                 if (json != null) {
                     com.scrolllock.app.data.room.Converters().toInstagramSettings(json)
-                } else null
-            } catch (e: Exception) { null }
+                } else {
+                    // Default settings when JSON is missing
+                    InstagramAntiReelsSettings(
+                        hideReelsOnHome = true,
+                        blockExplore = true,
+                        blockMainFeed = false,
+                        blockStories = false,
+                        blockComments = false,
+                        allowReelsInDMs = true,
+                        redirectOnBlock = false
+                    )
+                }
+            } catch (e: Exception) {
+                // Default settings on parse error
+                InstagramAntiReelsSettings(
+                    hideReelsOnHome = true,
+                    blockExplore = true,
+                    blockMainFeed = false,
+                    blockStories = false,
+                    blockComments = false,
+                    allowReelsInDMs = true,
+                    redirectOnBlock = false
+                )
+            }
         } else null
 
         val context = PolicyEngine.buildContext(
@@ -557,15 +643,6 @@ class ScrollLockAccessibilityService : AccessibilityService() {
         lastOverlayPackage = packageName
         mainHandler.post {
             overlayController?.showFullScreen(title, reason)
-        }
-    }
-
-    private fun startPrefsRefreshLoop() {
-        scope.launch {
-            while (isActive) {
-                refreshCachedPrefs()
-                delay(PREFS_REFRESH_INTERVAL_MS)
-            }
         }
     }
 

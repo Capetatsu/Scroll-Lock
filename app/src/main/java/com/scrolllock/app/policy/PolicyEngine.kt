@@ -88,7 +88,16 @@ object PolicyEngine {
     }
 
     private fun evaluateInstagram(context: DecisionContext): PolicyDecision? {
-        val settings = context.instagramSettings ?: return null
+        // ALWAYS use valid settings - create defaults if missing
+        val settings = context.instagramSettings ?: InstagramAntiReelsSettings(
+            hideReelsOnHome = true,
+            blockExplore = true,
+            blockMainFeed = false,
+            blockStories = false,
+            blockComments = false,
+            allowReelsInDMs = true,
+            redirectOnBlock = false
+        )
         val surface = context.surfaceName
 
         return when (surface) {

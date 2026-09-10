@@ -18,10 +18,10 @@ object DetectorEngine {
     private var lastDetectionTime: Long = 0L
     private var lastEventType: Int = 0
 
-    private const val CACHE_TTL_MS = 200L
+    internal const val CACHE_TTL_MS = 200L
     private const val WINDOW_CHANGE_INVALIDATE = true
-    private const val SCROLL_CACHE_TTL_MS = 50L
-    private const val CONTENT_CHANGE_INVALIDATE_TYPES = (
+    internal const val SCROLL_CACHE_TTL_MS = 50L
+    internal val CONTENT_CHANGE_INVALIDATE_TYPES = (
         AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
         AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
         AccessibilityEvent.TYPE_VIEW_FOCUSED or

@@ -141,6 +141,23 @@ fun SettingsScreen() {
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
+                Text("Diagnostics", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(8.dp))
+
+                SettingItem(
+                    title = "Detection Debug",
+                    subtitle = "Live detection pipeline, matched IDs, policy decisions",
+                    icon = Icons.Default.BugReport,
+                    onClick = {
+                        val intent = Intent(context, com.scrolllock.app.ui.debug.DebugActivity::class.java)
+                        context.startActivity(intent)
+                    }
+                )
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Text("About", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("ScrollLock v1.0.0", style = MaterialTheme.typography.bodyMedium)

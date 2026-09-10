@@ -33,6 +33,7 @@ fun AppsScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val db = remember { ScrollLockDatabase.getInstance(context) }
+    val prefs = remember { PreferencesManager(context) }
     val apps by db.appInfoDao().getAll().collectAsState(initial = emptyList())
 
     val socialPackages = listOf(
@@ -95,6 +96,9 @@ fun AppsScreen() {
                             db.appInfoDao().upsert(
                                 (current ?: AppInfo(packageName = pkg)).copy(enabled = enabled)
                             )
+                            if (enabled) {
+                                prefs.setProtectionEnabled(true)
+                            }
                         }
                     },
                     onToggleAntiReels = { antiReels ->
@@ -105,6 +109,24 @@ fun AppsScreen() {
                                     antiReels = if (antiReels) 1 else 0
                                 )
                             )
+                            if (antiReels) {
+                                prefs.setAntiReelsEnabled(true)
+                                prefs.setProtectionEnabled(true)
+                            }
+                        }
+                    },
+                    onToggleAntiScroll = { antiScroll ->
+                        scope.launch {
+                            val current = db.appInfoDao().getByPackage(pkg)
+                            db.appInfoDao().upsert(
+                                (current ?: AppInfo(packageName = pkg)).copy(
+                                    antiScroll = antiScroll
+                                )
+                            )
+                            if (antiScroll) {
+                                prefs.setAntiScrollEnabled(true)
+                                prefs.setProtectionEnabled(true)
+                            }
                         }
                     }
                 )
@@ -132,6 +154,10 @@ fun AppsScreen() {
                             db.appInfoDao().upsert(
                                 (current ?: AppInfo(packageName = pkg)).copy(enabled = enabled)
                             )
+                            if (enabled) {
+                                prefs.setProtectionEnabled(true)
+                                prefs.setBrowserBlockEnabled(true)
+                            }
                         }
                     }
                 )
@@ -148,7 +174,8 @@ fun AppItem(
     antiReels: Boolean = false,
     antiScroll: Boolean = false,
     onToggleEnabled: (Boolean) -> Unit,
-    onToggleAntiReels: ((Boolean) -> Unit)? = null
+    onToggleAntiReels: ((Boolean) -> Unit)? = null,
+    onToggleAntiScroll: ((Boolean) -> Unit)? = null
 ) {
     Card(
         modifier = Modifier
@@ -172,11 +199,18 @@ fun AppItem(
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (onToggleAntiReels != null) {
+                if (packageName == "com.instagram.android") {
                     FilterChip(
                         selected = antiReels,
-                        onClick = { onToggleAntiReels(!antiReels) },
+                        onClick = { onToggleAntiReels?.invoke(!antiReels) },
                         label = { Text("Reels") }
+                    )
+                }
+                if (packageName == "com.instagram.android") {
+                    FilterChip(
+                        selected = antiScroll,
+                        onClick = { onToggleAntiScroll?.invoke(!antiScroll) },
+                        label = { Text("Anti-Scroll") }
                     )
                 }
                 Switch(

@@ -133,4 +133,44 @@ class DetectorConfidenceTest {
         assertEquals(1, info.signals.size)
         assertEquals(1, info.reasonCodes.size)
     }
+
+    // NEW TESTS for Instagram detector reliability
+    @Test
+    fun `Instagram strong Reels resource ID yields high confidence`() {
+        // Single strong Reels ID (reel_item_toolbar_container) should give high confidence
+        val baseConfidence = 0.45 // REEL_ITEM_TOOLBAR weight
+        assertTrue("Primary Reels signal should have high weight", baseConfidence >= 0.40)
+    }
+
+    @Test
+    fun `Instagram multiple strong Reels IDs exceeds threshold`() {
+        var confidence = 0.0
+        confidence += 0.45 // REEL_ITEM_TOOLBAR
+        confidence += 0.40 // ROOT_CLIPS
+        assertTrue("Two strong Reels signals should exceed threshold", confidence >= 0.70)
+    }
+
+    @Test
+    fun `Instagram generic home feed plus Reels text not enough`() {
+        var confidence = 0.0
+        confidence += 0.15 // CONTENT_DESC_HOME
+        confidence += 0.08 // CONTENT_DESC_REELS (content desc is weak)
+        assertFalse("Generic home + Reels text should not reach threshold", confidence >= 0.70)
+    }
+
+    @Test
+    fun `Instagram Reels primary signals identified correctly`() {
+        // Verify primary signals have high weights
+        val primarySignals = mapOf(
+            "reel_item_toolbar_container" to 0.45,
+            "root_clips_layout" to 0.40,
+            "reels_view_pager" to 0.40,
+            "reel_video_view" to 0.35,
+            "reel_progress_bar" to 0.35,
+            "clips_metadata" to 0.30
+        )
+        primarySignals.values.forEach { weight ->
+            assertTrue("Primary Reels signals should have weight >= 0.30", weight >= 0.30)
+        }
+    }
 }

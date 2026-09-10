@@ -36,6 +36,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ui.debug.DebugActivity"
+            android:exported="false"
+            android:theme="@style/Theme.ScrollLock" />
+
         <service
             android:name=".accessibility.ScrollLockAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"

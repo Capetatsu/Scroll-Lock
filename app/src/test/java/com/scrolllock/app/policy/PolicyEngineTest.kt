@@ -291,4 +291,85 @@ class PolicyEngineTest {
         assertTrue(browserCtx.isBrowserSurface)
         assertFalse(antiScrollCtx.isAntiReelsSurface)
     }
+
+    // NEW TESTS for missing Instagram settings JSON fallback
+    @Test
+    fun `PolicyEngine blocks Instagram Reels with missing settings JSON using defaults`() {
+        val context = PolicyEngine.buildContext(
+            packageName = "com.instagram.android",
+            appEnabled = true,
+            antiReelsEnabled = true,
+            antiScrollEnabled = false,
+            browserBlockEnabled = false,
+            scheduleActive = true,
+            cooldownActive = false,
+            blockingSessionActive = false,
+            confidence = 0.85,
+            detectedFeature = FeatureMask.ANTI_REELS,
+            surfaceName = "REELS",
+            instagramSettings = null // Missing JSON should use defaults
+        )
+        val decision = PolicyEngine.evaluate(context)
+        assertEquals(PolicyDecision.Action.BLOCK, decision.action)
+        assertEquals("instagram_reels_blocked", decision.reason)
+    }
+
+    @Test
+    fun `PolicyEngine uses default Instagram settings when JSON missing`() {
+        // Test that defaults have correct values
+        val defaults = InstagramAntiReelsSettings(
+            hideReelsOnHome = true,
+            blockExplore = true,
+            blockMainFeed = false,
+            blockStories = false,
+            blockComments = false,
+            allowReelsInDMs = true,
+            redirectOnBlock = false
+        )
+        assertTrue(defaults.hideReelsOnHome)
+        assertTrue(defaults.blockExplore)
+        assertFalse(defaults.blockMainFeed)
+        assertFalse(defaults.blockStories)
+        assertFalse(defaults.blockComments)
+        assertTrue(defaults.allowReelsInDMs)
+    }
+
+    @Test
+    fun `PolicyEngine global protection disabled prevents all enforcement`() {
+        val context = PolicyEngine.buildContext(
+            packageName = "com.instagram.android",
+            appEnabled = true,
+            antiReelsEnabled = false, // Global feature disabled
+            antiScrollEnabled = false,
+            browserBlockEnabled = false,
+            scheduleActive = true,
+            cooldownActive = false,
+            blockingSessionActive = false,
+            confidence = 0.85,
+            detectedFeature = FeatureMask.ANTI_REELS,
+            surfaceName = "REELS"
+        )
+        val decision = PolicyEngine.evaluate(context)
+        assertEquals(PolicyDecision.Action.ALLOW, decision.action)
+        assertEquals("no_features_enabled", decision.reason)
+    }
+
+    @Test
+    fun `PolicyEngine global protection enabled allows detection pipeline`() {
+        val context = PolicyEngine.buildContext(
+            packageName = "com.instagram.android",
+            appEnabled = true,
+            antiReelsEnabled = true, // Global feature enabled
+            antiScrollEnabled = false,
+            browserBlockEnabled = false,
+            scheduleActive = true,
+            cooldownActive = false,
+            blockingSessionActive = false,
+            confidence = 0.85,
+            detectedFeature = FeatureMask.ANTI_REELS,
+            surfaceName = "REELS"
+        )
+        val decision = PolicyEngine.evaluate(context)
+        assertEquals(PolicyDecision.Action.BLOCK, decision.action)
+    }
 }

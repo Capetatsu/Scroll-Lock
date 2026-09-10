@@ -27,6 +27,13 @@ fun DashboardScreen() {
 
     val protectionActive = protectionEnabled && accessibilityEnabled && accessibilityConnected
 
+    // Refresh accessibility state when screen becomes visible
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose {
+            prefs.refreshAccessibilityServiceState()
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()

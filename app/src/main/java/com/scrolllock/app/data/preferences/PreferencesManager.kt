@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
@@ -40,12 +41,19 @@ class PreferencesManager(private val context: Context) {
     }
 
     val protectionEnabled: Flow<Boolean> = context.dataStore.data.map { it[PROTECTION_ENABLED] ?: false }
+        .distinctUntilChanged()
     val antiScrollEnabled: Flow<Boolean> = context.dataStore.data.map { it[ANTI_SCROLL_ENABLED] ?: false }
+        .distinctUntilChanged()
     val antiReelsEnabled: Flow<Boolean> = context.dataStore.data.map { it[ANTI_REELS_ENABLED] ?: false }
+        .distinctUntilChanged()
     val browserBlockEnabled: Flow<Boolean> = context.dataStore.data.map { it[BROWSER_BLOCK_ENABLED] ?: false }
+        .distinctUntilChanged()
     val schedulesEnabled: Flow<Boolean> = context.dataStore.data.map { it[SCHEDULES_ENABLED] ?: false }
+        .distinctUntilChanged()
     val cooldownEnabled: Flow<Boolean> = context.dataStore.data.map { it[COOLDOWN_ENABLED] ?: false }
+        .distinctUntilChanged()
     val debugMode: Flow<Boolean> = context.dataStore.data.map { it[DEBUG_MODE] ?: false }
+        .distinctUntilChanged()
 
     fun isProtectionEnabledBlocking(): Boolean = runBlocking { protectionEnabled.first() }
     fun isAntiScrollEnabledBlocking(): Boolean = runBlocking { antiScrollEnabled.first() }

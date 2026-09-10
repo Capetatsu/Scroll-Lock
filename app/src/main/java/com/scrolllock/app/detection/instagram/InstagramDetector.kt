@@ -1,6 +1,7 @@
 package com.scrolllock.app.detection.instagram
 
 import android.graphics.Rect
+import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import com.scrolllock.app.detection.*
 
@@ -8,21 +9,54 @@ class InstagramDetector : ContentDetector {
     override val packageNames = setOf("com.instagram.android")
 
     companion object {
-        // Core Reels IDs (from reverse engineering)
-        private const val REEL_ITEM_TOOLBAR = "com.instagram.android:id/reel_item_toolbar_container"
-        private const val REELS_TRAY = "com.instagram.android:id/reels_tray_container"
-        private const val ROOT_CLIPS = "com.instagram.android:id/root_clips_layout"
-        private const val CLIPS_AUTHOR = "com.instagram.android:id/clips_author_username"
-        private const val REEL_VIEW_PAGER = "com.instagram.android:id/reels_view_pager"
+        private const val TAG = "InstagramDetector"
 
-        // Navigation tab IDs
+        // Instagram-internal resource IDs — NOT a stable API, will drift over time.
+        // Keep this list as a fast-path exact-match short-circuit; substring match is primary.
+        private val KNOWN_REELS_IDS = setOf(
+            "com.instagram.android:id/reel_item_toolbar_container",
+            "com.instagram.android:id/root_clips_layout",
+            "com.instagram.android:id/reels_view_pager",
+            "com.instagram.android:id/reel_video_view",
+            "com.instagram.android:id/reel_progress_bar",
+            "com.instagram.android:id/clips_metadata",
+            "com.instagram.android:id/reels_recycler_view",
+            "com.instagram.android:id/clips_recycler_view",
+            "com.instagram.android:id/reels_tray_container",
+            "com.instagram.android:id/reel_share_button",
+            "com.instagram.android:id/reel_caption",
+            "com.instagram.android:id/clips_author_username",
+            "com.instagram.android:id/like_count",
+            "com.instagram.android:id/clips_recycler",
+            "com.instagram.android:id/reel_item_toolbar_container",
+            "com.instagram.android:id/reel_item_container",
+            "com.instagram.android:id/clips_root_view",
+            "com.instagram.android:id/reel_root_view",
+            "com.instagram.android:id/clips_player_view",
+            "com.instagram.android:id/reel_player_view",
+            "com.instagram.android:id/clips_tray_container",
+            "com.instagram.android:id/reels_container",
+            "com.instagram.android:id/clips_container",
+            "com.instagram.android:id/reel_container"
+        )
+
+        // Substring keywords that indicate Reels/Clips content (primary match)
+        private val REELS_KEYWORDS = listOf("reel", "clip", "clips")
+
+        // Secondary detectors keyword mappings
+        private val STORIES_KEYWORDS = listOf("story", "stories")
+        private val EXPLORE_KEYWORDS = listOf("explore", "search")
+        private val FEED_KEYWORDS = listOf("feed", "home")
+        private val DM_KEYWORDS = listOf("direct", "thread", "inbox")
+        private val COMMENT_KEYWORDS = listOf("comment")
+
+        // Navigation tab IDs (exact match)
         private const val DIRECT_TAB = "com.instagram.android:id/direct_tab"
         private const val FEED_TAB = "com.instagram.android:id/feed_tab"
         private const val EXPLORE_ACTION_BAR = "com.instagram.android:id/explore_action_bar"
         private const val NAVIGATION_TAB_BAR = "com.instagram.android:id/tab_bar"
 
         // Engagement IDs
-        private const val LIKE_COUNT = "com.instagram.android:id/like_count"
         private const val COMMENT_CONTAINER = "com.instagram.android:id/comment_thread_container"
         private const val COMMENT_INPUT = "com.instagram.android:id/layout_comment_thread_edittext"
         private const val INBOX_LIST = "com.instagram.android:id/inbox_refreshable_thread_list_recyclerview"
@@ -31,17 +65,6 @@ class InstagramDetector : ContentDetector {
         // Stories
         private const val STORIES_TRAY = "com.instagram.android:id/stories_tray_container"
         private const val STORY_RING = "com.instagram.android:id/story_ring"
-
-        // Additional Reels indicators (newer Instagram versions)
-        private const val REEL_VIDEO_VIEW = "com.instagram.android:id/reel_video_view"
-        private const val REEL_PROGRESS_BAR = "com.instagram.android:id/reel_progress_bar"
-        private const val CLIPS_METADATA = "com.instagram.android:id/clips_metadata"
-        private const val REEL_SHARE_BUTTON = "com.instagram.android:id/reel_share_button"
-        private const val REEL_CAPTION = "com.instagram.android:id/reel_caption"
-
-        // RecyclerView for Reels feed
-        private const val REELS_RECYCLER_VIEW = "com.instagram.android:id/reels_recycler_view"
-        private const val CLIPS_RECYCLER_VIEW = "com.instagram.android:id/clips_recycler_view"
 
         // Content descriptions (localized)
         private const val CONTENT_DESC_REELS = "Reels"
@@ -60,12 +83,23 @@ class InstagramDetector : ContentDetector {
     override fun classify(root: AccessibilityNodeInfo): List<DetectionCandidate> {
         val candidates = mutableListOf<DetectionCandidate>()
 
+        // Dump accessibility tree for debugging when in debug mode
+        if (isDebugLoggingEnabled()) {
+            dumpAccessibilityTree(root)
+        }
+
         detectReels(root)?.let { candidates.add(it) }
         detectStories(root)?.let { candidates.add(it) }
         detectExplore(root)?.let { candidates.add(it) }
         detectFeed(root)?.let { candidates.add(it) }
         detectDM(root)?.let { candidates.add(it) }
         detectComments(root)?.let { candidates.add(it) }
+
+        // Log if no detectors matched (for debugging ID drift)
+        if (candidates.isEmpty() && isDebugLoggingEnabled()) {
+            val allIds = collectAllResourceIds(root)
+            Log.w(TAG, "InstagramDetector: no surface matched. Known IDs in tree: ${allIds.take(50).joinToString(", ")}")
+        }
 
         return candidates
     }
@@ -74,28 +108,50 @@ class InstagramDetector : ContentDetector {
         val signals = mutableListOf<DetectionSignal>()
         var confidence = 0.0
 
-        // Primary Reels identifiers (high confidence)
-        checkIdSignal(root, REEL_ITEM_TOOLBAR, "reel_item_toolbar_container", 0.35)?.let { signals.add(it); confidence += it.confidence }
-        checkIdSignal(root, REELS_TRAY, "reels_tray_container", 0.25)?.let { signals.add(it); confidence += it.confidence }
-        checkIdSignal(root, ROOT_CLIPS, "root_clips_layout", 0.20)?.let { signals.add(it); confidence += it.confidence }
-        checkIdSignal(root, REEL_VIEW_PAGER, "reels_view_pager", 0.20)?.let { signals.add(it); confidence += it.confidence }
+        // PRIMARY: Substring match on "reel"/"clip" keywords (primary detector)
+        // This runs FIRST as the primary detector, not a fallback
+        val substringSignals = collectSubstringMatches(root, REELS_KEYWORDS, SignalType.RESOURCE_ID)
+        var foundSubstringMatch = false
+        for (signal in substringSignals) {
+            // Avoid duplicate signals for same node
+            if (!signals.any { it.identifier == signal.identifier }) {
+                signals.add(signal)
+                confidence += signal.confidence
+                foundSubstringMatch = true
+            }
+        }
 
-        // Additional Reels signals (medium confidence)
-        checkIdSignal(root, REEL_VIDEO_VIEW, "reel_video_view", 0.15)?.let { signals.add(it); confidence += it.confidence }
-        checkIdSignal(root, REEL_PROGRESS_BAR, "reel_progress_bar", 0.10)?.let { signals.add(it); confidence += it.confidence }
-        checkIdSignal(root, CLIPS_METADATA, "clips_metadata", 0.10)?.let { signals.add(it); confidence += it.confidence }
-        checkIdSignal(root, REEL_SHARE_BUTTON, "reel_share_button", 0.08)?.let { signals.add(it); confidence += it.confidence }
-        checkIdSignal(root, REEL_CAPTION, "reel_caption", 0.08)?.let { signals.add(it); confidence += it.confidence }
-        checkIdSignal(root, REELS_RECYCLER_VIEW, "reels_recycler_view", 0.10)?.let { signals.add(it); confidence += it.confidence }
-        checkIdSignal(root, CLIPS_RECYCLER_VIEW, "clips_recycler_view", 0.10)?.let { signals.add(it); confidence += it.confidence }
+        // SECONDARY: Exact match fast-path (known IDs) - runs as confirmation/boost
+        var foundExactReelsId = false
+        for (knownId in KNOWN_REELS_IDS) {
+            checkIdSignal(root, knownId, knownId, getReelsIdWeight(knownId))?.let {
+                signals.add(it)
+                confidence += it.confidence
+                foundExactReelsId = true
+            }
+        }
 
-        // Author and engagement
-        checkIdSignal(root, CLIPS_AUTHOR, "clips_author_username", 0.08)?.let { signals.add(it); confidence += it.confidence }
-        checkIdSignal(root, LIKE_COUNT, "like_count_visible", 0.05)?.let { signals.add(it); confidence += it.confidence }
+        // If both substring and exact match found, boost confidence
+        if (foundSubstringMatch && foundExactReelsId) {
+            confidence += 0.15
+        }
 
-        // Content description
-        checkContentDescSignal(root, CONTENT_DESC_REELS, "content_desc_reels", 0.10)?.let { signals.add(it); confidence += it.confidence }
-        checkContentDescSignal(root, CONTENT_DESC_REEL, "content_desc_reel", 0.08)?.let { signals.add(it); confidence += it.confidence }
+        // TERTIARY: Structural fallback - full-screen video with vertical pager
+        if (confidence < 0.70) {
+            val structuralSignal = detectReelsStructurally(root)
+            if (structuralSignal != null) {
+                signals.add(structuralSignal)
+                confidence += structuralSignal.confidence
+            }
+        }
+
+        // Author and engagement (supporting signals)
+        checkIdSignal(root, "com.instagram.android:id/clips_author_username", "clips_author_username", 0.10)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, "com.instagram.android:id/like_count", "like_count_visible", 0.08)?.let { signals.add(it); confidence += it.confidence }
+
+        // Content description (low weight - text can be unreliable)
+        checkContentDescSignal(root, "Reels", "content_desc_reels", 0.08)?.let { signals.add(it); confidence += it.confidence }
+        checkContentDescSignal(root, "Reel", "content_desc_reel", 0.08)?.let { signals.add(it); confidence += it.confidence }
 
         if (signals.isEmpty()) return null
 
@@ -106,9 +162,7 @@ class InstagramDetector : ContentDetector {
             confidence = confidence.coerceAtMost(1.0),
             bounds = bounds,
             reasonCodes = signals.map { it.description },
-            nodeReference = NodeUtils.findNodeById(root, REEL_ITEM_TOOLBAR)
-                ?: NodeUtils.findNodeById(root, ROOT_CLIPS)
-                ?: NodeUtils.findNodeById(root, REEL_VIEW_PAGER),
+            nodeReference = findPrimaryReelsNode(root),
             matchResult = if (confidence >= 0.70) DetectionResult.MATCH else DetectionResult.UNKNOWN,
             signals = signals
         )
@@ -118,9 +172,20 @@ class InstagramDetector : ContentDetector {
         val signals = mutableListOf<DetectionSignal>()
         var confidence = 0.0
 
-        checkIdSignal(root, STORIES_TRAY, "stories_tray_container", 0.35)?.let { signals.add(it); confidence += it.confidence }
-        checkIdSignal(root, STORY_RING, "story_ring", 0.25)?.let { signals.add(it); confidence += it.confidence }
-        checkContentDescSignal(root, CONTENT_DESC_STORIES, "content_desc_stories", 0.20)?.let { signals.add(it); confidence += it.confidence }
+        // Substring match for "story"/"stories" (primary)
+        val substringSignals = collectSubstringMatches(root, STORIES_KEYWORDS, SignalType.RESOURCE_ID)
+        for (signal in substringSignals) {
+            if (!signals.any { it.identifier == signal.identifier }) {
+                signals.add(signal)
+                confidence += signal.confidence
+            }
+        }
+
+        // Exact match for known IDs (confirmation/boost)
+        checkIdSignal(root, "com.instagram.android:id/stories_tray_container", "stories_tray_container", 0.35)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, "com.instagram.android:id/story_ring", "story_ring", 0.25)?.let { signals.add(it); confidence += it.confidence }
+
+        checkContentDescSignal(root, "Stories", "content_desc_stories", 0.20)?.let { signals.add(it); confidence += it.confidence }
 
         if (signals.isEmpty()) return null
 
@@ -138,9 +203,20 @@ class InstagramDetector : ContentDetector {
         val signals = mutableListOf<DetectionSignal>()
         var confidence = 0.0
 
-        checkIdSignal(root, EXPLORE_ACTION_BAR, "explore_action_bar", 0.40)?.let { signals.add(it); confidence += it.confidence }
-        checkContentDescSignal(root, CONTENT_DESC_SEARCH, "content_desc_search", 0.20)?.let { signals.add(it); confidence += it.confidence }
-        checkContentDescSignal(root, CONTENT_DESC_EXPLORE, "content_desc_explore", 0.20)?.let { signals.add(it); confidence += it.confidence }
+        // Substring match for "explore"/"search" (primary)
+        val substringSignals = collectSubstringMatches(root, EXPLORE_KEYWORDS, SignalType.RESOURCE_ID)
+        for (signal in substringSignals) {
+            if (!signals.any { it.identifier == signal.identifier }) {
+                signals.add(signal)
+                confidence += signal.confidence
+            }
+        }
+
+        // Exact match for known IDs
+        checkIdSignal(root, "com.instagram.android:id/explore_action_bar", "explore_action_bar", 0.40)?.let { signals.add(it); confidence += it.confidence }
+
+        checkContentDescSignal(root, "Search", "content_desc_search", 0.20)?.let { signals.add(it); confidence += it.confidence }
+        checkContentDescSignal(root, "Explore", "content_desc_explore", 0.20)?.let { signals.add(it); confidence += it.confidence }
 
         if (signals.isEmpty()) return null
 
@@ -158,7 +234,7 @@ class InstagramDetector : ContentDetector {
         val signals = mutableListOf<DetectionSignal>()
         var confidence = 0.0
 
-        val feedTab = NodeUtils.findNodeById(root, FEED_TAB)
+        val feedTab = NodeUtils.findNodeById(root, "com.instagram.android:id/feed_tab")
         if (feedTab != null) {
             val isSelected = NodeUtils.isSelected(feedTab)
             val isVisible = NodeUtils.isVisible(feedTab)
@@ -184,7 +260,17 @@ class InstagramDetector : ContentDetector {
                 confidence += 0.15
             }
         }
-        checkContentDescSignal(root, CONTENT_DESC_HOME, "content_desc_home", 0.15)?.let { signals.add(it); confidence += it.confidence }
+
+        // Substring match for "feed"/"home" (primary)
+        val substringSignals = collectSubstringMatches(root, FEED_KEYWORDS, SignalType.RESOURCE_ID)
+        for (signal in substringSignals) {
+            if (!signals.any { it.identifier == signal.identifier }) {
+                signals.add(signal)
+                confidence += signal.confidence
+            }
+        }
+
+        checkContentDescSignal(root, "Home", "content_desc_home", 0.15)?.let { signals.add(it); confidence += it.confidence }
 
         if (signals.isEmpty()) return null
 
@@ -203,10 +289,21 @@ class InstagramDetector : ContentDetector {
         val signals = mutableListOf<DetectionSignal>()
         var confidence = 0.0
 
-        checkIdSignal(root, DIRECT_TAB, "direct_tab", 0.30)?.let { signals.add(it); confidence += it.confidence }
-        checkIdSignal(root, INBOX_LIST, "inbox_thread_list", 0.25)?.let { signals.add(it); confidence += it.confidence }
-        checkIdSignal(root, DIRECT_THREAD_HEADER, "direct_thread_header", 0.25)?.let { signals.add(it); confidence += it.confidence }
-        checkContentDescSignal(root, CONTENT_DESC_DIRECT, "content_desc_direct", 0.15)?.let { signals.add(it); confidence += it.confidence }
+        // Exact match for known IDs
+        checkIdSignal(root, "com.instagram.android:id/direct_tab", "direct_tab", 0.30)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, "com.instagram.android:id/inbox_refreshable_thread_list_recyclerview", "inbox_thread_list", 0.25)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, "com.instagram.android:id/direct_thread_header", "direct_thread_header", 0.25)?.let { signals.add(it); confidence += it.confidence }
+
+        // Substring match for "direct"/"thread"/"inbox" (primary)
+        val substringSignals = collectSubstringMatches(root, DM_KEYWORDS, SignalType.RESOURCE_ID)
+        for (signal in substringSignals) {
+            if (!signals.any { it.identifier == signal.identifier }) {
+                signals.add(signal)
+                confidence += signal.confidence
+            }
+        }
+
+        checkContentDescSignal(root, "Direct", "content_desc_direct", 0.15)?.let { signals.add(it); confidence += it.confidence }
 
         if (signals.isEmpty()) return null
 
@@ -224,9 +321,20 @@ class InstagramDetector : ContentDetector {
         val signals = mutableListOf<DetectionSignal>()
         var confidence = 0.0
 
-        checkIdSignal(root, COMMENT_CONTAINER, "comment_thread_container", 0.35)?.let { signals.add(it); confidence += it.confidence }
-        checkIdSignal(root, COMMENT_INPUT, "comment_input_visible", 0.25)?.let { signals.add(it); confidence += it.confidence }
-        checkContentDescSignal(root, CONTENT_DESC_COMMENTS, "content_desc_comments", 0.20)?.let { signals.add(it); confidence += it.confidence }
+        // Exact match for known IDs
+        checkIdSignal(root, "com.instagram.android:id/comment_thread_container", "comment_thread_container", 0.35)?.let { signals.add(it); confidence += it.confidence }
+        checkIdSignal(root, "com.instagram.android:id/layout_comment_thread_edittext", "comment_input_visible", 0.25)?.let { signals.add(it); confidence += it.confidence }
+
+        // Substring match for "comment" (primary)
+        val substringSignals = collectSubstringMatches(root, COMMENT_KEYWORDS, SignalType.RESOURCE_ID)
+        for (signal in substringSignals) {
+            if (!signals.any { it.identifier == signal.identifier }) {
+                signals.add(signal)
+                confidence += signal.confidence
+            }
+        }
+
+        checkContentDescSignal(root, "Comments", "content_desc_comments", 0.20)?.let { signals.add(it); confidence += it.confidence }
 
         if (signals.isEmpty()) return null
 
@@ -238,6 +346,228 @@ class InstagramDetector : ContentDetector {
             matchResult = if (confidence >= 0.70) DetectionResult.MATCH else DetectionResult.UNKNOWN,
             signals = signals
         )
+    }
+
+    // ===== Helper Methods =====
+
+    private fun getReelsIdWeight(id: String): Double {
+        return when {
+            id.contains("reel_item_toolbar") || id.contains("reel_item_container") -> 0.45
+            id.contains("root_clips") || id.contains("clips_root") || id.contains("reel_root") || id.contains("clips_root_view") -> 0.40
+            id.contains("reels_view_pager") || id.contains("reel_view_pager") -> 0.40
+            id.contains("reel_video_view") || id.contains("reel_player") || id.contains("clips_player") || id.contains("clips_player_view") -> 0.35
+            id.contains("reel_progress_bar") -> 0.35
+            id.contains("clips_metadata") -> 0.30
+            id.contains("reels_recycler_view") || id.contains("clips_recycler_view") || id.contains("clips_recycler") || id.contains("reels_recycler") -> 0.25
+            id.contains("reels_tray_container") || id.contains("clips_tray_container") -> 0.20
+            id.contains("reel_share_button") -> 0.15
+            id.contains("reel_caption") -> 0.15
+            id.contains("clips_author_username") -> 0.10
+            id.contains("like_count") -> 0.08
+            else -> 0.05
+        }
+    }
+
+    private fun collectSubstringMatches(
+        root: AccessibilityNodeInfo,
+        keywords: List<String>,
+        type: SignalType
+    ): List<DetectionSignal> {
+        val signals = mutableListOf<DetectionSignal>()
+        val visited = mutableSetOf<String>()
+
+        fun traverse(node: AccessibilityNodeInfo, depth: Int) {
+            if (depth > 20) return
+            val id = node.viewIdResourceName
+            if (id != null && !visited.contains(id)) {
+                visited.add(id)
+                val lowerId = id.lowercase()
+                for (keyword in keywords) {
+                    if (lowerId.contains(keyword)) {
+                        val isVisible = NodeUtils.isVisible(node)
+                        if (!isVisible) break
+                        val adjustedConfidence = 0.25 * (1.0 - depth * 0.02).coerceAtLeast(0.4)
+                        signals.add(DetectionSignal(
+                            type = type,
+                            identifier = id,
+                            confidence = adjustedConfidence,
+                            isVisible = true,
+                            hierarchyDepth = depth,
+                            description = "substring:$id"
+                        ))
+                        break
+                    }
+                }
+            }
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                traverse(child, depth + 1)
+            }
+        }
+
+        traverse(root, 0)
+        return signals
+    }
+
+    private fun detectReelsStructurally(root: AccessibilityNodeInfo): DetectionSignal? {
+        // Look for a full-screen (or near full-screen) node that:
+        // 1. Is a video/surface view or fills most of the screen
+        // 2. Has a vertically scrollable ancestor (ViewPager2/RecyclerView)
+        // 3. Has an action rail (3-5 small clickable icons stacked vertically on right edge)
+
+        val windowBounds = android.graphics.Rect()
+        root.getBoundsInScreen(windowBounds)
+        val windowHeight = windowBounds.height()
+        val windowWidth = windowBounds.width()
+
+        var candidateNode: AccessibilityNodeInfo? = null
+        var maxArea = 0
+
+        fun findLargeVideoNode(node: AccessibilityNodeInfo) {
+            val bounds = android.graphics.Rect()
+            node.getBoundsInScreen(bounds)
+            val area = bounds.width() * bounds.height()
+            val coverage = area.toFloat() / (windowHeight * windowWidth)
+
+            // Node covers significant portion of screen
+            if (coverage > 0.5 && area > maxArea) {
+                val className = (node.className?.toString() ?: "").lowercase()
+                val isVideoLike = className.contains("video") || className.contains("surface") ||
+                        className.contains("player") || className.contains("texture") ||
+                        className.contains("media")
+
+                if (isVideoLike || coverage > 0.7) {
+                    // Check for vertically scrollable ancestor
+                    var parent = node.parent
+                    var hasVerticalPager = false
+                    var depth = 0
+                    while (parent != null && depth < 10) {
+                        val pClass = (parent.className?.toString() ?: "").lowercase()
+                        val isVerticalScroll = parent.isScrollable &&
+                                (pClass.contains("viewpager") || pClass.contains("recyclerview") ||
+                                 pClass.contains("pager"))
+                        if (isVerticalScroll) {
+                            hasVerticalPager = true
+                            break
+                        }
+                        parent = parent.parent
+                        depth++
+                    }
+
+                    // Check for action rail on right side (like/comment/share/save buttons)
+                    var hasActionRail = false
+                    fun checkActionRail(n: AccessibilityNodeInfo) {
+                        if (n.childCount >= 3 && n.childCount <= 6) {
+                            var clickableCount = 0
+                            for (i in 0 until n.childCount) {
+                                val child = n.getChild(i) ?: continue
+                                if (child.isClickable || child.isFocusable) clickableCount++
+                            }
+                            if (clickableCount >= 3) {
+                                val bounds = android.graphics.Rect()
+                                n.getBoundsInScreen(bounds)
+                                // Action rail typically on right edge
+                                if (bounds.left > windowWidth * 0.7) {
+                                    hasActionRail = true
+                                }
+                            }
+                        }
+                    }
+
+                    // Check siblings and ancestors for action rail
+                    var p = node.parent
+                    while (p != null) {
+                        checkActionRail(p)
+                        p = p.parent
+                    }
+
+                    if (hasVerticalPager || hasActionRail || isVideoLike) {
+                        candidateNode = node
+                        maxArea = area
+                    }
+                }
+            }
+
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                findLargeVideoNode(child)
+            }
+        }
+
+        findLargeVideoNode(root)
+
+        if (candidateNode != null) {
+            return DetectionSignal(
+                type = SignalType.HIERARCHY,
+                identifier = "structural:reels_video_pager",
+                confidence = 0.40,
+                isVisible = true,
+                hierarchyDepth = 0,
+                description = "structural:fullscreen_video_with_vertical_pager"
+            )
+        }
+        return null
+    }
+
+    private fun findPrimaryReelsNode(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        for (id in KNOWN_REELS_IDS) {
+            val node = NodeUtils.findNodeById(root, id)
+            if (node != null && NodeUtils.isVisible(node)) return node
+        }
+        // Fallback: find any node with reel/clip in ID
+        var found: AccessibilityNodeInfo? = null
+        fun traverse(node: AccessibilityNodeInfo) {
+            if (found != null) return
+            val id = node.viewIdResourceName
+            if (id != null) {
+                val lower = id.lowercase()
+                if (lower.contains("reel") || lower.contains("clip")) {
+                    if (NodeUtils.isVisible(node)) {
+                        found = node
+                        return
+                    }
+                }
+            }
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                traverse(child)
+            }
+        }
+        traverse(root)
+        return found
+    }
+
+    private fun dumpAccessibilityTree(root: AccessibilityNodeInfo) {
+        fun traverse(node: AccessibilityNodeInfo, depth: Int) {
+            if (depth > 20) return
+            val id = node.viewIdResourceName
+            if (id != null) {
+                val prefix = "  ".repeat(depth)
+                val className = node.className?.toString() ?: "unknown"
+                val desc = node.contentDescription?.toString() ?: ""
+                val text = node.text?.toString() ?: ""
+                Log.d(TAG, "$prefix$id | class=$className | desc='$desc' | text='$text'")
+            }
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                traverse(child, depth + 1)
+            }
+        }
+        traverse(root, 0)
+    }
+
+    private fun collectAllResourceIds(root: AccessibilityNodeInfo): List<String> {
+        val ids = mutableListOf<String>()
+        fun traverse(node: AccessibilityNodeInfo) {
+            val id = node.viewIdResourceName
+            if (id != null) ids.add(id)
+            for (i in 0 until node.childCount) {
+                val child = node.getChild(i) ?: continue
+                traverse(child)
+            }
+        }
+        traverse(root)
+        return ids.distinct()
     }
 
     private fun checkIdSignal(
@@ -323,9 +653,12 @@ class InstagramDetector : ContentDetector {
     }
 
     private fun findReelsBounds(root: AccessibilityNodeInfo): Rect? {
-        val node = NodeUtils.findNodeById(root, REEL_ITEM_TOOLBAR)
-            ?: NodeUtils.findNodeById(root, ROOT_CLIPS)
-            ?: NodeUtils.findNodeById(root, REEL_VIEW_PAGER)
-        return NodeUtils.getBounds(node)
+        return NodeUtils.getBounds(findPrimaryReelsNode(root))
+    }
+
+    private fun isDebugLoggingEnabled(): Boolean {
+        // Check if debug mode is enabled via a static flag or preferences
+        // For now, return true to enable logging during development
+        return true
     }
 }
